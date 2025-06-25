@@ -93,7 +93,7 @@ pub mod prelude {
     pub use crate::gap::*;
     #[cfg(feature = "gatt")]
     pub use crate::gatt::*;
-    pub use crate::host::{ControlRunner, EventHandler, HostMetrics, Runner, RxRunner, TxRunner};
+    pub use crate::host::{ControlRunner, EventHandler, HostMetrics, Runner, RxRunner, TxRunner, NoIO};
     pub use crate::l2cap::*;
     #[cfg(feature = "default-packet-pool")]
     pub use crate::packet_pool::DefaultPacketPool;

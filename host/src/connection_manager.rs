@@ -17,6 +17,7 @@ use crate::prelude::sar::PacketReassembly;
 #[cfg(feature = "security")]
 use crate::security_manager::{SecurityEventData, SecurityManager};
 use crate::{config, Error, Identity, PacketPool};
+use crate::host::InputOutput;
 
 struct State<'d, P> {
     connections: &'d mut [ConnectionStorage<P>],
@@ -520,14 +521,14 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         false
     }
 
-    pub(crate) fn handle_security_channel(&self, handle: ConnHandle, pdu: Pdu<P::Packet>) -> Result<(), Error> {
+    pub(crate) async fn handle_security_channel<IO: InputOutput>(&self, handle: ConnHandle, pdu: Pdu<P::Packet>, io: &IO) -> Result<(), Error> {
         #[cfg(feature = "security")]
         {
             let state = self.state.borrow();
             for storage in state.connections.iter() {
                 match storage.state {
                     ConnectionState::Connected if storage.handle.unwrap() == handle => {
-                        if let Err(error) = self.security_manager.handle(pdu, self, storage) {
+                        if let Err(error) = self.security_manager.handle(pdu, self, storage, io).await {
                             error!("Failed to handle security manager packet, {:?}", error);
                             return Err(error);
                         }

@@ -33,6 +33,7 @@ use crate::prelude::Connection;
 use crate::security_manager::types::UseOutOfBand;
 use crate::types::l2cap::L2CAP_CID_LE_U_SECURITY_MANAGER;
 use crate::{Address, Error, Identity, PacketPool};
+use crate::host::InputOutput;
 
 /// Events of interest to the security manager
 pub(crate) enum SecurityEventData {
@@ -420,11 +421,12 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     }
 
     /// Handle packet
-    pub(crate) fn handle<P: PacketPool>(
+    pub(crate) async fn handle<P: PacketPool, IO: crate::host::InputOutput>(
         &self,
         pdu: Pdu<P::Packet>,
-        connections: &ConnectionManager<P>,
+        connections: &ConnectionManager<'_, P>,
         storage: &ConnectionStorage<P::Packet>,
+        io: &IO,
     ) -> Result<(), Error> {
         // Should it be possible to handle multiple concurrent pairings?
         let role = storage.role.ok_or(Error::InvalidValue)?;
@@ -509,7 +511,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                 Command::PairingResponse => self.handle_pairing_response(payload, connections, handle),
                 Command::PairingPublicKey => self.handle_pairing_public_key(payload, connections, handle),
                 Command::PairingConfirm => self.handle_pairing_confirm(payload, connections, handle),
-                Command::PairingRandom => self.handle_pairing_random(payload, connections, handle, storage),
+                Command::PairingRandom => self.handle_pairing_random(payload, connections, handle, storage, io).await,
                 Command::PairingDhKeyCheck => self.handle_pairing_dhkey_check(payload, connections, handle, storage),
                 Command::PairingFailed => self.handle_pairing_failed(payload),
                 Command::IdentityInformation => self.handle_identity_information(payload, handle),
@@ -947,12 +949,13 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     }
 
     /// Handle pairing random command
-    fn handle_pairing_random<P: PacketPool>(
+    async fn handle_pairing_random<P: PacketPool, IO: InputOutput>(
         &self,
         payload: &[u8],
-        connections: &ConnectionManager<P>,
+        connections: &ConnectionManager<'_, P>,
         handle: ConnHandle,
         storage: &ConnectionStorage<P::Packet>,
+        io: &IO
     ) -> Result<(), Error> {
         let peer_nonce = Nonce(u128::from_le_bytes(
             payload
@@ -1007,9 +1010,10 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                 local_nonce.g2(local_public_key.x(), peer_public_key.x(), &peer_nonce)
             };
 
-            // should display the code and get confirmation from user (pin ok or not) - if not okay send a pairing-failed
-            // assume it's correct or the user will cancel on central
-            info!("Display code is ** {} **", vb.0);
+            // Should display_compare be async?
+            if !io.display_compare(vb.0).await {
+                return Err(Error::Security(Reason::ConfirmValueFailed));
+            }
 
             // Authentication stage 2 and long term key calculation
             // ([Vol 3] Part H, Section 2.3.5.6.5 and C.2.2.4).

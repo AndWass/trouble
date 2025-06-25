@@ -67,7 +67,7 @@ async fn gatt_client_server() {
 
         let server = AttributeServer::<NoopRawMutex, DefaultPacketPool, 10, 1, CONNECTIONS_MAX>::new(table);
         select! {
-            r = runner.run() => {
+            r = runner.run(&NoIO) => {
                 r
             }
             r = async {
@@ -139,7 +139,7 @@ async fn gatt_client_server() {
         } = stack.build();
 
         select! {
-            r = runner.run() => {
+            r = runner.run(&NoIO) => {
                 r
             }
             r = async {
