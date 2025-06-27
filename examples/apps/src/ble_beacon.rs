@@ -61,7 +61,7 @@ where
     .unwrap();
 
     info!("Starting advertising");
-    let _ = join(runner.run(), async {
+    let _ = join(runner.run(&NoIO), async {
         loop {
             let mut params = AdvertisementParameters::default();
             params.interval_min = Duration::from_millis(25);

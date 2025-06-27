@@ -50,7 +50,7 @@ where
     };
 
     info!("Scanning for peripheral...");
-    let _ = join(runner.run(), async {
+    let _ = join(runner.run(&NoIO), async {
         loop {
             // Check that the controller used supports the necessary features for high throughput.
             let res = stack

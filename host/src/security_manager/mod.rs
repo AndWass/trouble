@@ -5,6 +5,7 @@
 mod constants;
 mod crypto;
 mod types;
+mod state;
 
 use core::cell::RefCell;
 use core::future::{poll_fn, Future};

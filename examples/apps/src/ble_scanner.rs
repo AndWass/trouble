@@ -31,7 +31,7 @@ where
         seen: RefCell::new(Deque::new()),
     };
     let mut scanner = Scanner::new(central);
-    let _ = join(runner.run_with_handler(&printer), async {
+    let _ = join(runner.run_with_handler(&NoIO, &printer), async {
         let mut config = ScanConfig::default();
         config.active = true;
         config.phys = PhySet::M1;

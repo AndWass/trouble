@@ -40,7 +40,7 @@ where
     };
 
     info!("Scanning for peripheral...");
-    let _ = join(runner.run(), async {
+    let _ = join(runner.run(&NoIO), async {
         loop {
             let conn = central.connect(&config).await.unwrap();
             info!("Connected, creating l2cap channel");

@@ -51,8 +51,20 @@ use crate::types::l2cap::{
 use crate::{att, Address, BleHostError, Error, PacketPool, Stack};
 
 pub trait InputOutput {
-    // Default just works
+    fn has_display(&self) -> bool {
+        false
+    }
+    fn has_yes_no_display(&self) -> bool {
+        false
+    }
+
+    fn has_keyboard(&self) -> bool {
+        false
+    }
+
+    // Default just works which is the case of no display
     fn display_compare(&self, value: u32) -> impl Future<Output=bool> {
+        info!("Display compare: {}", value);
         core::future::ready(true)
     }
 }

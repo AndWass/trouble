@@ -89,7 +89,7 @@ where
 /// ```
 async fn ble_task<C: Controller, P: PacketPool>(mut runner: Runner<'_, C, P>) {
     loop {
-        if let Err(e) = runner.run().await {
+        if let Err(e) = runner.run(&NoIO).await {
             #[cfg(feature = "defmt")]
             let e = defmt::Debug2Format(&e);
             panic!("[ble_task] error: {:?}", e);
