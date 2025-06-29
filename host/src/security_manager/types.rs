@@ -456,7 +456,7 @@ const AUTH_REQ_CT2: u8 = 0b0010_0000;
 impl AuthReq {
     /// Build a AuthReq octet
     pub fn new(bonding: BondingFlag) -> Self {
-        AuthReq((bonding as u8) | AUTH_REQ_MITM | AUTH_REQ_SECURE_CONNECTION | AUTH_REQ_CT2)
+        AuthReq((bonding as u8) | AUTH_REQ_MITM | AUTH_REQ_SECURE_CONNECTION)
     }
     /// Bond requested
     pub fn bond(&self) -> BondingFlag {
@@ -645,8 +645,8 @@ impl Default for PairingFeatures {
             use_oob: UseOutOfBand::NotPresent,
             security_properties: AuthReq::new(BondingFlag::NoBonding),
             maximum_encryption_key_size: ENCRYPTION_KEY_SIZE_128_BITS,
-            initiator_key_distribution: KeyDistributionFlags(KeyDistributionFlags::ENCRYPTION_KEY),
-            responder_key_distribution: KeyDistributionFlags(KeyDistributionFlags::ENCRYPTION_KEY),
+            initiator_key_distribution: KeyDistributionFlags(0),
+            responder_key_distribution: KeyDistributionFlags(0),
         }
     }
 }

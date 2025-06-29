@@ -5,7 +5,7 @@
 mod constants;
 mod crypto;
 mod types;
-mod state;
+mod pairing;
 
 use core::cell::RefCell;
 use core::future::{poll_fn, Future};
@@ -35,6 +35,8 @@ use crate::security_manager::types::UseOutOfBand;
 use crate::types::l2cap::L2CAP_CID_LE_U_SECURITY_MANAGER;
 use crate::{Address, Error, Identity, PacketPool};
 use crate::host::InputOutput;
+use crate::security_manager::pairing::pairings_ops_from_fn;
+use crate::security_manager::pairing::peripheral::Pairing;
 
 /// Events of interest to the security manager
 pub(crate) enum SecurityEventData {
@@ -227,8 +229,14 @@ struct PairingData {
     ltk: Option<u128>,
     /// Peer device address
     peer_address: Option<Address>,
+    /// Local device address
+    local_address: Option<Address>,
     /// Identity Resolving Key
     irk: Option<IdentityResolvingKey>,
+    /// Secret ra
+    peer_secret_r: Option<u128>,
+    /// Secret rb
+    local_secret_r: Option<u128>,
 }
 
 impl PairingData {
@@ -252,7 +260,10 @@ impl PairingData {
             local_check: None,
             ltk: None,
             peer_address: None,
+            local_address: None,
             irk: None,
+            peer_secret_r: None,
+            local_secret_r: None,
         }
     }
     /// Clear pairing data
@@ -315,6 +326,7 @@ pub struct SecurityManager<const BOND_COUNT: usize> {
     state: RefCell<SecurityManagerData<BOND_COUNT>>,
     /// Current state of the pairing
     pairing_state: RefCell<PairingData>,
+    pairing_sm: RefCell<Option<pairing::peripheral::Pairing>>,
     /// Received events
     events: Channel<NoopRawMutex, SecurityEventData, 2>,
     result_signal: Signal<NoopRawMutex, Reason>,
@@ -335,6 +347,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
             rng: RefCell::new(ChaCha12Rng::from_seed(random_seed)),
             state: RefCell::new(SecurityManagerData::new()),
             events: Channel::new(),
+            pairing_sm: RefCell::new(None),
             pairing_state: RefCell::new(PairingData::new()),
             result_signal: Signal::new(),
             timer_expires: RefCell::new(Instant::now() + Self::TIMEOUT_DISABLE),
@@ -507,19 +520,40 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
 
             trace!("Security Manager Protocol command {}", command);
 
-            match command {
-                Command::PairingRequest => self.handle_pairing_request(payload, connections, handle),
-                Command::PairingResponse => self.handle_pairing_response(payload, connections, handle),
-                Command::PairingPublicKey => self.handle_pairing_public_key(payload, connections, handle),
-                Command::PairingConfirm => self.handle_pairing_confirm(payload, connections, handle),
-                Command::PairingRandom => self.handle_pairing_random(payload, connections, handle, storage, io).await,
-                Command::PairingDhKeyCheck => self.handle_pairing_dhkey_check(payload, connections, handle, storage),
-                Command::PairingFailed => self.handle_pairing_failed(payload),
-                Command::IdentityInformation => self.handle_identity_information(payload, handle),
-                Command::IdentityAddressInformation => self.handle_identity_address_information(payload),
-                _ => {
-                    warn!("Unhandled Security Manager Protocol command {}", command);
-                    Ok(())
+            if role == LeConnRole::Peripheral {
+                info!("Pairing step with new state machine!");
+                let sm = {
+                    let mut sm_mut = self.pairing_sm.borrow_mut();
+                    if sm_mut.is_none() {
+                        *sm_mut = Some(Pairing::new(self.state.borrow().local_address.unwrap(), peer_address, &self.pairing_state));
+                    }
+                    drop(sm_mut);
+                    self.pairing_sm.borrow()
+                };
+                let mut ops = pairings_ops_from_fn(handle, |tx| {
+                    self.try_send_packet(tx, connections, handle)
+                }, |ltk: &LongTermKey| {
+                    let bond_info = self.store_pairing()?;
+                    self.try_send_event(SecurityEventData::EnableEncryption(handle, bond_info))
+                });
+                let mut rng_borrow = self.rng.borrow_mut();
+                sm.as_ref().unwrap().handle(command, payload, &mut ops, &self.pairing_state, rng_borrow.deref_mut())
+            }
+            else {
+                match command {
+                    Command::PairingRequest => self.handle_pairing_request(payload, connections, handle),
+                    Command::PairingResponse => self.handle_pairing_response(payload, connections, handle),
+                    Command::PairingPublicKey => self.handle_pairing_public_key(payload, connections, handle),
+                    Command::PairingConfirm => self.handle_pairing_confirm(payload, connections, handle),
+                    Command::PairingRandom => self.handle_pairing_random(payload, connections, handle, storage, io).await,
+                    Command::PairingDhKeyCheck => self.handle_pairing_dhkey_check(payload, connections, handle, storage),
+                    Command::PairingFailed => self.handle_pairing_failed(payload),
+                    Command::IdentityInformation => self.handle_identity_information(payload, handle),
+                    Command::IdentityAddressInformation => self.handle_identity_address_information(payload),
+                    _ => {
+                        warn!("Unhandled Security Manager Protocol command {}", command);
+                        Ok(())
+                    }
                 }
             }
         };
@@ -603,7 +637,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
             }
         } else {
             // Send sequrity request to central
-            let auth_req = AuthReq::new(BondingFlag::Bonding);
+            let auth_req = AuthReq::new(BondingFlag::NoBonding);
 
             let mut packet: TxPacket<P> =
                 TxPacket::new(P::allocate().ok_or(Error::OutOfMemory)?, Command::SecurityRequest)?;
@@ -695,7 +729,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         }
         let mut local_features = PairingFeatures {
             io_capabilities: IoCapabilities::NoInputNoOutput,
-            security_properties: AuthReq::new(BondingFlag::Bonding),
+            security_properties: AuthReq::new(BondingFlag::NoBonding),
             ..Default::default()
         };
 
