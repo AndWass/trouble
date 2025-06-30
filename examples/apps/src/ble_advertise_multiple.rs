@@ -64,7 +64,7 @@ where
     let mut handles = AdvertisementSet::handles(&sets);
 
     info!("Starting advertising");
-    let _ = join(runner.run(&NoIO), async {
+    let _ = join(runner.run(), async {
         loop {
             let _advertiser = peripheral.advertise_ext(&sets, &mut handles).await.unwrap();
             loop {

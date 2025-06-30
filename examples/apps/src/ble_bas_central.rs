@@ -38,7 +38,7 @@ where
     };
 
     info!("Scanning for peripheral...");
-    let _ = join(runner.run(&NoIO), async {
+    let _ = join(runner.run(), async {
         info!("Connecting");
 
         let conn = central.connect(&config).await.unwrap();

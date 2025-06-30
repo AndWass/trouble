@@ -2,8 +2,8 @@ use crate::codec::{Decode, Encode};
 use crate::security_manager::constants::ENCRYPTION_KEY_SIZE_128_BITS;
 use crate::security_manager::crypto::{Nonce, PublicKey, SecretKey};
 use crate::security_manager::types::{AuthReq, BondingFlag, Command, IoCapabilities, PairingFeatures};
-use crate::security_manager::{PairingData, PairingMethod, PairingState, Reason, SecurityEventData};
-use crate::{Address, BondInformation, Error, Identity, LongTermKey, PacketPool};
+use crate::security_manager::{PairingData, PairingMethod, PairingState, Reason};
+use crate::{Address, Error, LongTermKey, PacketPool};
 use core::cell::RefCell;
 use core::ops::Deref;
 use rand_chacha::ChaCha12Rng;
@@ -221,7 +221,7 @@ impl Phase1 {
         if !peer_features.security_properties.secure_connection() {
             return Err(Error::Security(Reason::UnspecifiedReason));
         }
-        let mut local_features = PairingFeatures {
+        let local_features = PairingFeatures {
             io_capabilities: IoCapabilities::NoInputNoOutput,
             security_properties: AuthReq::new(BondingFlag::NoBonding),
             ..Default::default()

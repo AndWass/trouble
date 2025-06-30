@@ -36,7 +36,7 @@ async fn l2cap_connection_oriented_channels() {
 
 
         select! {
-            r = runner.run(&NoIO) => {
+            r = runner.run() => {
                 r
             }
             r = async {
@@ -101,7 +101,7 @@ async fn l2cap_connection_oriented_channels() {
         } = stack.build();
 
         select! {
-            r = runner.run(&NoIO) => {
+            r = runner.run() => {
                 r
             }
             r = async {

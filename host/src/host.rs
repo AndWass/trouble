@@ -2,7 +2,7 @@
 //!
 //! The host module contains the main entry point for the TrouBLE host.
 use core::cell::RefCell;
-use core::future::{poll_fn, Future};
+use core::future::{poll_fn};
 use core::mem::MaybeUninit;
 use core::task::Poll;
 
@@ -49,28 +49,6 @@ use crate::types::l2cap::{
     L2CAP_CID_LE_U_SIGNAL,
 };
 use crate::{att, Address, BleHostError, Error, PacketPool, Stack};
-
-pub trait InputOutput {
-    fn has_display(&self) -> bool {
-        false
-    }
-    fn has_yes_no_display(&self) -> bool {
-        false
-    }
-
-    fn has_keyboard(&self) -> bool {
-        false
-    }
-
-    // Default just works which is the case of no display
-    fn display_compare(&self, value: u32) -> impl Future<Output=bool> {
-        info!("Display compare: {}", value);
-        core::future::ready(true)
-    }
-}
-
-pub struct NoIO;
-impl InputOutput for NoIO {}
 
 /// A BLE Host.
 ///
@@ -303,7 +281,7 @@ where
         true
     }
 
-    async fn handle_acl<IO: InputOutput>(&self, io: &IO, acl: AclPacket<'_>) -> Result<(), Error> {
+    async fn handle_acl(&self, acl: AclPacket<'_>) -> Result<(), Error> {
         self.connections.received(acl.handle())?;
         let handle = acl.handle();
         let (header, pdu) = match acl.boundary_flag() {
@@ -495,7 +473,7 @@ where
                 panic!("le signalling channel was fragmented, impossible!");
             }
             L2CAP_CID_LE_U_SECURITY_MANAGER => {
-                self.connections.handle_security_channel(acl.handle(), pdu, io).await?;
+                self.connections.handle_security_channel(acl.handle(), pdu).await?;
             }
             other if other >= L2CAP_CID_DYN_START => match self.channels.dispatch(header.channel, pdu) {
                 Ok(_) => {}
@@ -669,7 +647,7 @@ impl<'d, C: Controller, P: PacketPool> Runner<'d, C, P> {
     }
 
     /// Run the host.
-    pub async fn run<IO: InputOutput>(&mut self, io: &IO) -> Result<(), BleHostError<C::Error>>
+    pub async fn run(&mut self) -> Result<(), BleHostError<C::Error>>
     where
         C: ControllerCmdSync<Disconnect>
             + ControllerCmdSync<SetEventMask>
@@ -693,11 +671,11 @@ impl<'d, C: Controller, P: PacketPool> Runner<'d, C, P> {
             + ControllerCmdSync<ReadBdAddr>,
     {
         let dummy = DummyHandler;
-        self.run_with_handler(io, &dummy).await
+        self.run_with_handler(&dummy).await
     }
 
     /// Run the host with a vendor event handler for custom events.
-    pub async fn run_with_handler<IO: InputOutput, E: EventHandler>(&mut self, io: &IO, event_handler: &E) -> Result<(), BleHostError<C::Error>>
+    pub async fn run_with_handler<E: EventHandler>(&mut self, event_handler: &E) -> Result<(), BleHostError<C::Error>>
     where
         C: ControllerCmdSync<Disconnect>
             + ControllerCmdSync<SetEventMask>
@@ -721,7 +699,7 @@ impl<'d, C: Controller, P: PacketPool> Runner<'d, C, P> {
             + ControllerCmdSync<ReadBdAddr>,
     {
         let control_fut = self.control.run();
-        let rx_fut = self.rx.run_with_handler(io, event_handler);
+        let rx_fut = self.rx.run_with_handler(event_handler);
         let tx_fut = self.tx.run();
         pin_mut!(control_fut, rx_fut, tx_fut);
         match select3(&mut tx_fut, &mut rx_fut, &mut control_fut).await {
@@ -743,17 +721,17 @@ impl<'d, C: Controller, P: PacketPool> Runner<'d, C, P> {
 
 impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
     /// Run the receive loop that polls the controller for events.
-    pub async fn run<IO: InputOutput>(&mut self, io: &IO) -> Result<(), BleHostError<C::Error>>
+    pub async fn run(&mut self) -> Result<(), BleHostError<C::Error>>
     where
         C: ControllerCmdSync<Disconnect>,
     {
         let dummy = DummyHandler;
-        self.run_with_handler(io, &dummy).await
+        self.run_with_handler(&dummy).await
     }
 
     /// Runs the receive loop that pools the controller for events, dispatching
     /// vendor events to the provided closure.
-    pub async fn run_with_handler<IO: InputOutput, E: EventHandler>(&mut self, io: &IO, event_handler: &E) -> Result<(), BleHostError<C::Error>>
+    pub async fn run_with_handler<E: EventHandler>(&mut self, event_handler: &E) -> Result<(), BleHostError<C::Error>>
     where
         C: ControllerCmdSync<Disconnect>,
     {
@@ -773,7 +751,7 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
             // last = Instant::now();
             //        trace!("[host] polling took {} ms", (polled - started).as_millis());
             match result {
-                Ok(ControllerToHostPacket::Acl(acl)) => match host.handle_acl(io, acl).await {
+                Ok(ControllerToHostPacket::Acl(acl)) => match host.handle_acl(acl).await {
                     Ok(_) => {}
                     Err(e) => {
                         warn!(

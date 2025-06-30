@@ -37,7 +37,7 @@ where
     let scan_data_len =
         AdStructure::encode_slice(&[AdStructure::CompleteLocalName(b"Trouble")], &mut scan_data[..]).unwrap();
 
-    let _ = join(runner.run(&NoIO), async {
+    let _ = join(runner.run(), async {
         loop {
             info!("Advertising, waiting for connection...");
             let advertiser = peripheral

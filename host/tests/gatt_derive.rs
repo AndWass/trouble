@@ -97,7 +97,7 @@ async fn gatt_client_server() {
         server.set(&server.service.value, &value).unwrap();
 
         select! {
-            r = runner.run(&NoIO) => {
+            r = runner.run() => {
                 r
             }
             r = async {
@@ -172,7 +172,7 @@ async fn gatt_client_server() {
         } = stack.build();
 
         select! {
-            r = runner.run(&NoIO) => {
+            r = runner.run() => {
                 r
             }
             r = async {
