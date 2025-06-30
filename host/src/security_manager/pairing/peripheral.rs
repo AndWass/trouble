@@ -1,14 +1,16 @@
 use crate::codec::{Decode, Encode};
 use crate::security_manager::constants::ENCRYPTION_KEY_SIZE_128_BITS;
 use crate::security_manager::crypto::{Nonce, PublicKey, SecretKey};
+use crate::security_manager::pairing::util::{
+    make_dhkey_check_packet, make_pairing_random, make_public_key_packet, prepare_packet, CommandAndPayload,
+};
+use crate::security_manager::pairing::PairingOps;
 use crate::security_manager::types::{AuthReq, BondingFlag, Command, IoCapabilities, PairingFeatures};
 use crate::security_manager::{PairingData, PairingMethod, PairingState, Reason};
 use crate::{Address, Error, LongTermKey, PacketPool};
 use core::cell::RefCell;
 use core::ops::Deref;
 use rand_chacha::ChaCha12Rng;
-use crate::security_manager::pairing::PairingOps;
-use crate::security_manager::pairing::util::{make_dhkey_check_packet, make_pairing_random, make_public_key_packet, prepare_packet, CommandAndPayload};
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 enum NumericComparisonState {
@@ -213,8 +215,7 @@ impl Phase1 {
         ops: &mut OPS,
         pairing_data: &RefCell<PairingData>,
     ) -> Result<(), Error> {
-        let peer_features =
-            PairingFeatures::decode(payload).map_err(|_| Error::Security(Reason::InvalidParameters))?;
+        let peer_features = PairingFeatures::decode(payload).map_err(|_| Error::Security(Reason::InvalidParameters))?;
         if peer_features.maximum_encryption_key_size < ENCRYPTION_KEY_SIZE_128_BITS {
             return Err(Error::Security(Reason::EncryptionKeySize));
         }
@@ -227,7 +228,10 @@ impl Phase1 {
             ..Default::default()
         };
 
-        info!("Received key distribution {:?}", peer_features.initiator_key_distribution);
+        info!(
+            "Received key distribution {:?}",
+            peer_features.initiator_key_distribution
+        );
 
         // Set identity key flag
         /*if peer_features.initiator_key_distribution.identity_key() {
@@ -268,7 +272,8 @@ impl Phase1 {
         ops: &mut OPS,
         pairing_data: &RefCell<PairingData>,
     ) -> Result<(), Error> {
-        let packet = make_public_key_packet::<P>(pairing_data.borrow().public_key.as_ref().ok_or(Error::InvalidValue)?)?;
+        let packet =
+            make_public_key_packet::<P>(pairing_data.borrow().public_key.as_ref().ok_or(Error::InvalidValue)?)?;
 
         match ops.try_send_packet(packet) {
             Ok(_) => (),
@@ -334,15 +339,17 @@ impl Phase2Step {
             Self::WaitDHKeyEa => {
                 self.handle_dhkey_check_ea::<P, OPS>(command, ops, pairing_data)?;
                 Ok(Some(Self::Done))
-            },
+            }
             Self::Done => Err(Error::InvalidState),
         }
     }
 
-    fn handle_dhkey_check_ea<P: PacketPool, OPS: PairingOps<P>>(&self,
-                                                                command: CommandAndPayload,
-                                                                ops: &mut OPS,
-                                                                pairing_data: &RefCell<PairingData>) -> Result<(), Error> {
+    fn handle_dhkey_check_ea<P: PacketPool, OPS: PairingOps<P>>(
+        &self,
+        command: CommandAndPayload,
+        ops: &mut OPS,
+        pairing_data: &RefCell<PairingData>,
+    ) -> Result<(), Error> {
         if command.command != Command::PairingDhKeyCheck {
             return Err(Error::InvalidState);
         }
@@ -359,8 +366,20 @@ impl Phase2Step {
             let peer_address = pairing_data.peer_address.ok_or(Error::InvalidValue)?;
             let local_address = pairing_data.local_address.ok_or(Error::InvalidValue)?;
 
-            (mac_key.f6(peer_nonce, local_nonce, rb, peer_iocap.into(), peer_address, local_address).0.to_le_bytes(),
-             mac_key.f6(local_nonce, peer_nonce, ra, local_iocap, local_address, peer_address))
+            (
+                mac_key
+                    .f6(
+                        peer_nonce,
+                        local_nonce,
+                        rb,
+                        peer_iocap.into(),
+                        peer_address,
+                        local_address,
+                    )
+                    .0
+                    .to_le_bytes(),
+                mac_key.f6(local_nonce, peer_nonce, ra, local_iocap, local_address, peer_address),
+            )
         };
 
         let (bd_addr, ltk) = {
@@ -453,10 +472,7 @@ impl Pairing {
         pairing_data: &RefCell<PairingData>,
         rng: &mut ChaCha12Rng,
     ) -> Result<(), Error> {
-        let parsed_command = CommandAndPayload {
-            command,
-            payload
-        };
+        let parsed_command = CommandAndPayload { command, payload };
         let next_phase = {
             let phase = self.phase.borrow();
             match phase.deref() {
@@ -475,76 +491,49 @@ impl Pairing {
     }
 }
 
-/*#[cfg(test)]
+#[cfg(test)]
 mod tests {
     extern crate alloc;
-    use crate::pdu::Pdu;
     use crate::security_manager::crypto::{Nonce, PublicKey, SecretKey};
+    use crate::security_manager::pairing::peripheral::Pairing;
+    use crate::security_manager::pairing::util::make_public_key_packet;
+    use crate::security_manager::pairing::PairingOps;
     use crate::security_manager::types::{Command, IoCapabilities, PairingFeatures};
-    use crate::security_manager::{PairingData, SecurityEventData, TxPacket};
-    use crate::{Address, Error, Packet, PacketPool};
-    use alloc::boxed::Box;
-    use alloc::vec::Vec;
+    use crate::security_manager::{PairingData, TxPacket};
+    use crate::{Address, Error, LongTermKey, Packet, PacketPool};
     use bt_hci::param::ConnHandle;
     use core::cell::RefCell;
     use rand_chacha::ChaCha12Core;
     use rand_core::SeedableRng;
-    use crate::security_manager::pairing::PairingOps;
-    use crate::security_manager::pairing::peripheral::Pairing;
-    use crate::security_manager::pairing::util::{make_public_key_packet};
 
-    struct BoxedPoolPacket(Box<[u8]>);
+    #[derive(Debug)]
+    struct TestPacket(heapless::Vec<u8, 128>);
 
-    impl BoxedPoolPacket {
-        pub fn into_pdu(self) -> Pdu<Self> {
-            let len = self.0.len();
-            Pdu::new(self, len)
-        }
-        pub fn new(cmd: Command, payload: &[u8]) -> Self {
-            let mut data = Vec::new();
-            let cmd_byte = match cmd {
-                Command::PairingRequest => 0x01,
-                Command::PairingResponse => 0x02,
-                Command::PairingConfirm => 0x03,
-                Command::PairingRandom => 0x04,
-                Command::PairingFailed => 0x05,
-                Command::EncryptionInformation => 0x06,
-                Command::CentralIdentification => 0x07,
-                Command::IdentityInformation => 0x08,
-                Command::IdentityAddressInformation => 0x09,
-                Command::SigningInformation => 0x0a,
-                Command::SecurityRequest => 0x0b,
-                Command::PairingPublicKey => 0x0c,
-                Command::PairingDhKeyCheck => 0x0d,
-                Command::KeypressNotification => 0x0e,
-            };
-            data.push(cmd_byte);
-            data.extend_from_slice(payload);
-            Self(data.into_boxed_slice())
-        }
-    }
-
-    impl AsRef<[u8]> for BoxedPoolPacket {
+    impl AsRef<[u8]> for TestPacket {
         fn as_ref(&self) -> &[u8] {
-            self.0.as_ref()
+            self.0.as_slice()
         }
     }
 
-    impl AsMut<[u8]> for BoxedPoolPacket {
+    impl AsMut<[u8]> for TestPacket {
         fn as_mut(&mut self) -> &mut [u8] {
-            self.0.as_mut()
+            self.0.as_mut_slice()
         }
     }
 
-    impl Packet for BoxedPoolPacket {}
+    impl Packet for TestPacket {}
 
-    struct BoxedPool;
-    impl PacketPool for BoxedPool {
-        type Packet = BoxedPoolPacket;
-        const MTU: usize = 251;
+    #[derive(Debug)]
+    struct HeaplessPool;
+
+    impl PacketPool for HeaplessPool {
+        type Packet = TestPacket;
+        const MTU: usize = 128;
 
         fn allocate() -> Option<Self::Packet> {
-            Some(BoxedPoolPacket(Box::new([0u8; Self::MTU])))
+            let mut ret = TestPacket(heapless::Vec::new());
+            ret.0.resize(Self::MTU, 0).unwrap();
+            Some(ret)
         }
 
         fn capacity() -> usize {
@@ -554,18 +543,18 @@ mod tests {
 
     #[derive(Default)]
     struct TestOps {
-        sent_packets: Vec<TxPacket<BoxedPool>>,
-        sent_events: Vec<SecurityEventData>,
+        sent_packets: heapless::Vec<TxPacket<HeaplessPool>, 10>,
+        encryptions: heapless::Vec<LongTermKey, 10>,
     }
 
-    impl PairingOps<BoxedPool> for TestOps {
-        fn try_send_packet(&mut self, packet: TxPacket<BoxedPool>) -> Result<(), Error> {
-            self.sent_packets.push(packet);
+    impl PairingOps<HeaplessPool> for TestOps {
+        fn try_send_packet(&mut self, packet: TxPacket<HeaplessPool>) -> Result<(), Error> {
+            let _ = self.sent_packets.push(packet);
             Ok(())
         }
 
-        fn try_send_event(&mut self, event: SecurityEventData) -> Result<(), Error> {
-            self.sent_events.push(event);
+        fn try_enable_encryption(&mut self, ltk: &LongTermKey) -> Result<(), Error> {
+            self.encryptions.push(ltk.clone()).unwrap();
             Ok(())
         }
 
@@ -578,11 +567,15 @@ mod tests {
     fn happy_path() {
         let mut pairing_ops = TestOps::default();
         let pairing_data = RefCell::new(PairingData::new());
-        let pairing = Pairing::new(Address::random([1, 2, 3, 4, 5, 6]), Address::random([7, 8, 9, 10, 11, 12]), &pairing_data);
+        let pairing = Pairing::new(
+            Address::random([1, 2, 3, 4, 5, 6]),
+            Address::random([7, 8, 9, 10, 11, 12]),
+            &pairing_data,
+        );
         let mut rng = ChaCha12Core::seed_from_u64(1).into();
         // Central sends pairing request, expects pairing response from peripheral
         pairing
-            .handle::<BoxedPool, _>(
+            .handle::<HeaplessPool, _>(
                 Command::PairingRequest,
                 &[0x03, 0, 0x08, 16, 0, 0],
                 &mut pairing_ops,
@@ -592,27 +585,33 @@ mod tests {
             .unwrap();
         {
             let sent_packets = &pairing_ops.sent_packets;
-            assert_eq!(pairing_data.borrow().peer_features, Some(PairingFeatures {
-                io_capabilities: IoCapabilities::NoInputNoOutput,
-                security_properties: 8.into(),
-                ..Default::default()
-            }));
+            assert_eq!(
+                pairing_data.borrow().peer_features,
+                Some(PairingFeatures {
+                    io_capabilities: IoCapabilities::NoInputNoOutput,
+                    security_properties: 8.into(),
+                    ..Default::default()
+                })
+            );
             assert_eq!(sent_packets.len(), 1);
             let pairing_response = &sent_packets[0];
             assert_eq!(pairing_response.command, Command::PairingResponse);
             assert_eq!(pairing_response.payload(), &[0x03, 0, 12, 16, 0, 0]);
-            assert_eq!(pairing_data.borrow().local_features, Some(PairingFeatures {
-                io_capabilities: IoCapabilities::NoInputNoOutput,
-                security_properties: 12.into(),
-                ..Default::default()
-            }));
+            assert_eq!(
+                pairing_data.borrow().local_features,
+                Some(PairingFeatures {
+                    io_capabilities: IoCapabilities::NoInputNoOutput,
+                    security_properties: 12.into(),
+                    ..Default::default()
+                })
+            );
         }
         // Pairing method expected to be just works (numeric comparison)
         // Central sends public key, expects peripheral public key followed by peripheral confirm
         let secret_key = SecretKey::new(&mut rng);
-        let packet = make_public_key_packet::<BoxedPool>(&secret_key.public_key()).unwrap();
+        let packet = make_public_key_packet::<HeaplessPool>(&secret_key.public_key()).unwrap();
         pairing
-            .handle::<BoxedPool, _>(
+            .handle::<HeaplessPool, _>(
                 Command::PairingPublicKey,
                 packet.payload(),
                 &mut pairing_ops,
@@ -632,20 +631,32 @@ mod tests {
             assert_eq!(local_public, PublicKey::from_bytes(sent_packets[1].payload()));
             assert_eq!(sent_packets[1].command, Command::PairingPublicKey);
             // These magic values depends on the random number generator and the seed.
-            assert_eq!(sent_packets[1].payload(), &[83, 171, 46, 254, 4, 90, 134, 154, 166, 92, 149, 210, 40, 29, 13, 105, 204, 111, 93, 54, 48, 113, 67, 56, 159, 46, 229, 216, 65, 17, 185, 147, 105, 13, 253, 69, 206, 82, 83, 1, 1, 141, 124, 108, 221, 90, 7, 60, 250, 66, 190, 186, 121, 211, 140, 7, 80, 110, 58, 174, 243, 47, 255, 61]);
+            assert_eq!(
+                sent_packets[1].payload(),
+                &[
+                    83, 171, 46, 254, 4, 90, 134, 154, 166, 92, 149, 210, 40, 29, 13, 105, 204, 111, 93, 54, 48, 113,
+                    67, 56, 159, 46, 229, 216, 65, 17, 185, 147, 105, 13, 253, 69, 206, 82, 83, 1, 1, 141, 124, 108,
+                    221, 90, 7, 60, 250, 66, 190, 186, 121, 211, 140, 7, 80, 110, 58, 174, 243, 47, 255, 61
+                ]
+            );
 
             assert_eq!(sent_packets[2].command, Command::PairingConfirm);
-            assert_eq!(sent_packets[2].payload(), &[27, 253, 56, 56, 116, 220, 121, 84, 160, 189, 222, 40, 163, 99, 44, 214]);
+            assert_eq!(
+                sent_packets[2].payload(),
+                &[27, 253, 56, 56, 116, 220, 121, 84, 160, 189, 222, 40, 163, 99, 44, 214]
+            );
             let confirm = pairing_data.borrow().confirm.unwrap();
-            assert_eq!(confirm.0, u128::from_le_bytes(sent_packets[2].payload().try_into().unwrap()));
+            assert_eq!(
+                confirm.0,
+                u128::from_le_bytes(sent_packets[2].payload().try_into().unwrap())
+            );
 
             assert!(pairing_data.borrow().local_nonce.is_some());
         }
 
         // Central sends Nonce, expects Nonce
-        let pdu = BoxedPoolPacket::new(Command::PairingRandom, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]).into_pdu();
         pairing
-            .handle::<BoxedPool, _>(
+            .handle::<HeaplessPool, _>(
                 Command::PairingRandom,
                 &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
                 &mut pairing_ops,
@@ -657,7 +668,9 @@ mod tests {
         {
             let pairing_data = pairing_data.borrow();
             let sent_packets = &pairing_ops.sent_packets;
-            let peer_nonce = Nonce(u128::from_le_bytes([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]));
+            let peer_nonce = Nonce(u128::from_le_bytes([
+                1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+            ]));
             let local_nonce = pairing_data.local_nonce.unwrap().0.to_le_bytes();
             assert_eq!(sent_packets.len(), 4);
             assert_eq!(sent_packets[3].command, Command::PairingRandom);
@@ -665,12 +678,14 @@ mod tests {
             assert_eq!(pairing_data.peer_nonce, Some(peer_nonce));
             assert!(pairing_data.mac_key.is_some());
             assert!(pairing_data.ltk.is_some());
-            assert_eq!(pairing_ops.sent_events.len(), 0);
+            assert_eq!(pairing_ops.encryptions.len(), 0);
         }
         pairing
-            .handle::<BoxedPool, _>(
+            .handle::<HeaplessPool, _>(
                 Command::PairingDhKeyCheck,
-                &[0x70, 0xa9, 0xf1, 0xd0, 0xcf, 0x52, 0x84, 0xe9, 0xfc, 0x36, 0x9b, 0x84, 0x35, 0x13, 0xc5, 0xed],
+                &[
+                    0x70, 0xa9, 0xf1, 0xd0, 0xcf, 0x52, 0x84, 0xe9, 0xfc, 0x36, 0x9b, 0x84, 0x35, 0x13, 0xc5, 0xed,
+                ],
                 &mut pairing_ops,
                 &pairing_data,
                 &mut rng,
@@ -683,9 +698,15 @@ mod tests {
             let local_nonce = pairing_data.local_nonce.unwrap().0.to_le_bytes();
             assert_eq!(sent_packets.len(), 5);
             assert_eq!(sent_packets[4].command, Command::PairingDhKeyCheck);
-            assert_eq!(sent_packets[4].payload(), [22, 123, 0, 74, 239, 81, 163, 188, 71, 111, 251, 117, 54, 186, 205, 3]);
-            assert_eq!(pairing_ops.sent_events.len(), 1);
-            assert!(matches!(pairing_ops.sent_events[0], SecurityEventData::EnableEncryption(_, _)));
+            assert_eq!(
+                sent_packets[4].payload(),
+                [22, 123, 0, 74, 239, 81, 163, 188, 71, 111, 251, 117, 54, 186, 205, 3]
+            );
+            assert_eq!(pairing_ops.encryptions.len(), 1);
+            assert!(matches!(
+                pairing_ops.encryptions[0],
+                LongTermKey(_)
+            ));
         }
     }
-}*/
+}
