@@ -49,7 +49,7 @@ impl Phase1 {
         let state = self.state();
         match (state, command.command) {
             (Phase1Step::WaitingPairingResponse, Command::PairingResponse) => {
-                self.handle_pairing_response::<P, OPS>(command.payload, ops, pairing_data)?;
+                //self.handle_pairing_response::<P, OPS>(command.payload, ops, pairing_data)?;
                 self.generate_public_private_key(pairing_data, rng);
                 self.send_public_key::<P, OPS>(ops, pairing_data)?;
                 self.generate_diffie_hellman_key(pairing_data)?;
@@ -431,7 +431,7 @@ impl Phase2 {
         pairing_data: &RefCell<PairingData>,
         rng: &mut ChaCha12Rng,
     ) -> Result<Self, Error> {
-        Ok(Self {
+        /*Ok(Self {
             step: RefCell::new(Phase2Step::NumericComparison(
                 crate::security_manager::pairing::peripheral::NumericComparison::initiate::<P, OPS>(
                     ops,
@@ -439,7 +439,8 @@ impl Phase2 {
                     rng,
                 )?,
             )),
-        })
+        })*/
+        todo!()
     }
 
     pub fn handle<P: PacketPool, OPS: PairingOps<P>>(
@@ -448,7 +449,7 @@ impl Phase2 {
         ops: &mut OPS,
         pairing_data: &RefCell<PairingData>,
     ) -> Result<Option<Phases>, Error> {
-        let next_step = self.step.borrow().handle::<P, OPS>(command, ops, pairing_data)?;
+        /*let next_step = self.step.borrow().handle::<P, OPS>(command, ops, pairing_data)?;
         if let Some(next_step) = next_step {
             let done = matches!(next_step, Phase2Step::Done);
             *self.step.borrow_mut() = next_step;
@@ -456,7 +457,7 @@ impl Phase2 {
                 // TODO should be conditional if we should send extra encryption data or not
                 return Ok(Some(Phases::Done));
             }
-        }
+        }*/
         Ok(None)
     }
 }
@@ -468,7 +469,7 @@ enum Phases {
     Done,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 enum Step {
     Idle,
     // Initiate pairing
@@ -488,11 +489,12 @@ enum Step {
     // Calculate LTK, the EaSentTag is used to ensure that the DHKey check value Ea has been sent
     // when transitioning to this state.
     WaitingDHKeyCheckEb(EHKeyEaSentTag),
-    Done,
+    Success,
+    Error(Error),
 }
 
 #[derive(Debug, Copy, Clone)]
-struct PassKeyConfirmSentTag{
+struct PassKeyConfirmSentTag {
     round: i32,
 }
 
@@ -504,8 +506,12 @@ struct PairingStep {
 }
 
 impl PairingStep {
-    pub fn handle<P: PacketPool, OPS: PairingOps<P>>(&self, command: CommandAndPayload) {
-        let current_step = *self.current_step.borrow();
+    fn handle_packet<P: PacketPool, OPS: PairingOps<P>>(&self, command: CommandAndPayload) {
+        if self.is_error() {
+            return;
+        }
+
+        let current_step = self.current_step.borrow().clone();
         let next_step = match (current_step, command.command) {
             (Step::WaitingPairingResponse, Command::PairingResponse) => {
                 //self.handle_pairing_response(command)?;
@@ -543,18 +549,17 @@ impl PairingStep {
             }
 
             (Step::WaitingPassKeyRandom(s), Command::PairingRandom) =>
-            {
-                // self.handle_pass_key_random(s, command)?;
-                if s == 20 {
-                    // Step::WaitingDHKeyCheckEb(EHKeyEaSentTag::new())
-                    todo!()
+                {
+                    // self.handle_pass_key_random(s, command)?;
+                    if s == 20 {
+                        // Step::WaitingDHKeyCheckEb(EHKeyEaSentTag::new())
+                        todo!()
+                    } else {
+                        // self.generate_nonce();
+                        // Step::WaitingPassKeyConfirm(PassKeyConfirmSentTag::new(s+1))
+                        todo!()
+                    }
                 }
-                else {
-                    // self.generate_nonce();
-                    // Step::WaitingPassKeyConfirm(PassKeyConfirmSentTag::new(s+1))
-                    todo!()
-                }
-            }
 
             // Out of band
             (Step::WaitingOOBPairingRandom, Command::PairingRandom) => {
@@ -572,6 +577,33 @@ impl PairingStep {
         };
 
         self.current_step.replace(next_step);
+    }
+
+    pub fn handle_numeric_comparison_result(&self, matches: bool) {
+        if self.is_error() {
+            return;
+        }
+
+        let next_state = if !matches {
+            // TODO should we send something?
+            Step::Error(Error::Security(Reason::NumericComparisonFailed))
+        } else {
+            let current_step = self.current_step.borrow().clone();
+            match current_step {
+                Step::WaitingNumericComparisonResult => {
+                    // Step::WaitingDHKeyCheckEb(EHKeyEaSentTag::new())
+                    todo!()
+                },
+                _ => {
+                    panic!("Invalid state")
+                }
+            }
+        };
+        self.current_step.replace(next_state);
+    }
+
+    fn is_error(&self) -> bool {
+        matches!(self.current_step.borrow().deref(), Step::Error(_))
     }
 
     fn need_numeric_comparison_result(&self) -> bool {

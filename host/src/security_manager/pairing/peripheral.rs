@@ -9,7 +9,7 @@ use crate::security_manager::types::{AuthReq, BondingFlag, Command, IoCapabiliti
 use crate::security_manager::{PairingData, PairingMethod, PairingState, Reason};
 use crate::{Address, Error, LongTermKey, PacketPool};
 use core::cell::RefCell;
-use core::ops::Deref;
+use core::ops::{Deref, DerefMut};
 use rand_chacha::ChaCha12Rng;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -487,6 +487,128 @@ impl Pairing {
         Ok(())
     }
 }
+
+#[derive(Debug, Clone)]
+enum Step {
+    WaitingPairingRequest,
+    WaitingPublicKey,
+    // Numeric comparison
+    WaitingNumericComparisonRandom(NumericCompareConfirmSentTag),
+    WaitingNumericComparisonResult,
+    // TODO add pass key entry and OOB
+    WaitingDHKeyEa,
+    Success,
+    Error(Error),
+}
+
+#[derive(Debug, Clone)]
+struct NumericCompareConfirmSentTag {}
+
+struct PairingStep {
+    current_step: RefCell<Step>,
+    pairing_data: RefCell<PairingData2>,
+}
+
+struct PairingData2 {
+    peer_features: PairingFeatures,
+    local_features: PairingFeatures,
+    peer_public_key: Option<PublicKey>,
+    local_public_key: Option<PublicKey>,
+    private_key: Option<SecretKey>,
+}
+
+impl PairingStep {
+    pub fn handle<P: PacketPool, OPS: PairingOps<P>>(&self, command: CommandAndPayload, ops: &mut OPS, rng: &mut ChaCha12Rng) -> Result<(), Error> {
+        let current_step = self.current_step.borrow().clone();
+        let mut pairing_data = self.pairing_data.borrow_mut();
+        let pairing_data = pairing_data.deref_mut();
+        let next_step = {
+            match (current_step, command.command) {
+                (Step::WaitingPairingRequest, Command::PairingRequest) => {
+                    Self::handle_pairing_request(command.payload, ops, pairing_data)?;
+                    Self::send_pairing_response(ops, pairing_data)?;
+                    Step::WaitingPublicKey
+                },
+                (Step::WaitingPublicKey, Command::PairingPublicKey) => {
+                    Self::handle_public_key(command.payload, pairing_data);
+                    Self::generate_private_public_key_pair(pairing_data, rng);
+                    Self::send_public_key(ops, pairing_data)?;
+                    Step::WaitingNumericComparisonRandom(NumericCompareConfirmSentTag {})
+                }
+
+                _ => return Err(Error::InvalidState),
+            }
+        };
+
+        self.current_step.replace(next_step);
+
+        Ok(())
+    }
+
+    fn handle_pairing_request<P: PacketPool, OPS: PairingOps<P>>(
+        payload: &[u8],
+        ops: &mut OPS,
+        pairing_data: &mut PairingData2,
+    ) -> Result<(), Error> {
+        let peer_features = PairingFeatures::decode(payload).map_err(|_| Error::Security(Reason::InvalidParameters))?;
+        if peer_features.maximum_encryption_key_size < ENCRYPTION_KEY_SIZE_128_BITS {
+            return Err(Error::Security(Reason::EncryptionKeySize));
+        }
+        if !peer_features.security_properties.secure_connection() {
+            return Err(Error::Security(Reason::UnspecifiedReason));
+        }
+        let local_features = PairingFeatures {
+            io_capabilities: IoCapabilities::NoInputNoOutput,
+            security_properties: AuthReq::new(BondingFlag::NoBonding),
+            ..Default::default()
+        };
+
+        info!(
+            "Received key distribution {:?}",
+            peer_features.initiator_key_distribution
+        );
+
+        // Set identity key flag
+        /*if peer_features.initiator_key_distribution.identity_key() {
+            local_features.initiator_key_distribution.set_identity_key();
+        }*/
+
+        pairing_data.local_features = local_features;
+        pairing_data.peer_features = peer_features;
+
+        Ok(())
+    }
+
+    fn send_pairing_response<P: PacketPool, OPS: PairingOps<P>>(ops: &mut OPS, pairing_data: &mut PairingData2) -> Result<(), Error> {
+        let mut packet = prepare_packet::<P>(Command::PairingResponse)?;
+
+        let response = packet.payload_mut();
+        pairing_data.local_features.encode(response).map_err(|_| Error::InvalidValue)?;
+
+        match ops.try_send_packet(packet) {
+            Ok(_) => {},
+            Err(error) => {
+                error!("[security manager] Failed to respond to request {:?}", error);
+                return Err(error);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn handle_public_key(payload: &[u8], pairing_data: &mut PairingData2) {
+        let peer_public_key = PublicKey::from_bytes(payload);
+        pairing_data.peer_public_key = Some(peer_public_key);
+    }
+
+    fn generate_private_public_key_pair(pairing_data: &mut PairingData2, rng: &mut ChaCha12Rng) {
+        let secret_key = SecretKey::new(rng);
+        let public_key = secret_key.public_key();
+        pairing_data.local_public_key = Some(public_key);
+        pairing_data.private_key = Some(secret_key);
+    }
+}
+
 
 #[cfg(test)]
 mod tests {

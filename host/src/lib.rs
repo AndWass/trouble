@@ -250,7 +250,7 @@ pub enum BleHostError<E> {
 pub const MAX_INVALID_DATA_LEN: usize = 16;
 
 /// Errors related to Host.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Error {
     /// Error encoding parameters for HCI commands.
