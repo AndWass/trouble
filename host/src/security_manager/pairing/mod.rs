@@ -3,6 +3,7 @@ use crate::{Error, LongTermKey, PacketPool};
 use crate::security_manager::{TxPacket};
 
 pub mod peripheral;
+pub mod central;
 mod util;
 
 pub trait PairingOps<P: PacketPool> {

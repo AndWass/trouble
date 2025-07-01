@@ -76,13 +76,12 @@ impl NumericComparison {
                 .map_err(|_| Error::Security(Reason::InvalidParameters))?,
         ));
 
-        let (local_nonce, peer_public_key, local_public_key, peer_confirm) = {
+        let (local_nonce, peer_public_key, local_public_key) = {
             let pairing_data = pairing_data.borrow();
             let local_nonce = pairing_data.local_nonce.ok_or(Error::InvalidValue)?;
             let peer_public_key = pairing_data.public_key_peer.ok_or(Error::InvalidValue)?;
             let local_public_key = pairing_data.public_key.ok_or(Error::InvalidValue)?;
-            let peer_confirm = pairing_data.confirm.ok_or(Error::InvalidValue)?;
-            (local_nonce, peer_public_key, local_public_key, peer_confirm)
+            (local_nonce, peer_public_key, local_public_key)
         };
 
         let packet = make_pairing_random::<P>(&local_nonce)?;
@@ -372,7 +371,7 @@ impl Phase2Step {
                         peer_nonce,
                         local_nonce,
                         rb,
-                        peer_iocap.into(),
+                        peer_iocap,
                         peer_address,
                         local_address,
                     )
@@ -382,11 +381,10 @@ impl Phase2Step {
             )
         };
 
-        let (bd_addr, ltk) = {
+        let ltk = {
             let pairing_data = pairing_data.borrow();
             let ltk = pairing_data.ltk.ok_or(Error::InvalidValue)?;
-            let address = pairing_data.peer_address.ok_or(Error::InvalidValue)?;
-            (address.addr, LongTermKey(ltk))
+            LongTermKey(ltk)
         };
 
         if command.payload != expected_payload {
@@ -396,7 +394,6 @@ impl Phase2Step {
         let packet = make_dhkey_check_packet::<P>(&response)?;
         ops.try_send_packet(packet)?;
 
-        let handle = ops.connection_handle();
         ops.try_enable_encryption(&ltk)?;
         Ok(())
     }

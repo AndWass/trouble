@@ -1,8 +1,9 @@
 use crate::pdu::Pdu;
-use crate::security_manager::crypto::{Check, Nonce, PublicKey};
+use crate::security_manager::crypto::{Check, DHKey, MacKey, Nonce, PublicKey};
 use crate::security_manager::types::Command;
 use crate::security_manager::{Reason, TxPacket};
-use crate::{Error, PacketPool};
+use crate::{Address, Error, LongTermKey, PacketPool};
+use bt_hci::param::BdAddr;
 pub fn prepare_packet<P: PacketPool>(command: Command) -> Result<TxPacket<P>, Error> {
     let packet = P::allocate().ok_or(Error::OutOfMemory)?;
     TxPacket::new(packet, command)
@@ -37,6 +38,16 @@ pub fn make_dhkey_check_packet<P: PacketPool>(check: &Check) -> Result<TxPacket<
     let bytes = check.0.to_le_bytes();
     response[..bytes.len()].copy_from_slice(&bytes);
     Ok(packet)
+}
+
+pub fn make_mac_and_ltk(
+    dh_key: &DHKey,
+    central_nonce: &Nonce,
+    peripheral_nonce: &Nonce,
+    central_address: Address,
+    peripheral_address: Address,
+) -> (MacKey, LongTermKey) {
+    dh_key.f5(*central_nonce, *peripheral_nonce, central_address, peripheral_address)
 }
 
 #[derive(Debug, Clone)]
