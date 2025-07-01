@@ -3,7 +3,6 @@ use crate::security_manager::crypto::{Check, DHKey, MacKey, Nonce, PublicKey};
 use crate::security_manager::types::Command;
 use crate::security_manager::{Reason, TxPacket};
 use crate::{Address, Error, LongTermKey, PacketPool};
-use bt_hci::param::BdAddr;
 pub fn prepare_packet<P: PacketPool>(command: Command) -> Result<TxPacket<P>, Error> {
     let packet = P::allocate().ok_or(Error::OutOfMemory)?;
     TxPacket::new(packet, command)

@@ -804,14 +804,13 @@ impl PairingStep {
 mod tests {
     extern crate alloc;
     use crate::security_manager::crypto::{Nonce, PublicKey, SecretKey};
-    use crate::security_manager::pairing::peripheral::{Pairing, PairingStep};
+    use crate::security_manager::pairing::peripheral::{PairingStep};
     use crate::security_manager::pairing::util::make_public_key_packet;
     use crate::security_manager::pairing::PairingOps;
     use crate::security_manager::types::{Command, IoCapabilities, PairingFeatures};
-    use crate::security_manager::{PairingData, TxPacket};
+    use crate::security_manager::{TxPacket};
     use crate::{Address, Error, LongTermKey, Packet, PacketPool};
     use bt_hci::param::ConnHandle;
-    use core::cell::RefCell;
     use rand_chacha::ChaCha12Core;
     use rand_core::SeedableRng;
 
