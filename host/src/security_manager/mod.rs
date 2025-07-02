@@ -523,7 +523,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                 let sm = {
                     let mut sm_mut = self.pairing_sm.borrow_mut();
                     if sm_mut.is_none() {
-                        *sm_mut = Some(Pairing::new(self.state.borrow().local_address.unwrap(), peer_address, &self.pairing_state));
+                        *sm_mut = Some(Pairing::new(self.state.borrow().local_address.unwrap(), peer_address));
                     }
                     drop(sm_mut);
                     self.pairing_sm.borrow()
@@ -531,11 +531,17 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                 let mut ops = pairings_ops_from_fn(handle, |tx| {
                     self.try_send_packet(tx, connections, handle)
                 }, |ltk: &LongTermKey| {
-                    let bond_info = self.store_pairing()?;
+                    info!("Enabling encryption for {}", peer_identity);
+                    //let bond_info = self.store_pairing()?;
+                    let bond_info = BondInformation {
+                        ltk: ltk.clone(),
+                        identity: peer_identity.clone(),
+                    };
+                    self.add_bond_information(bond_info.clone())?;
                     self.try_send_event(SecurityEventData::EnableEncryption(handle, bond_info))
                 });
                 let mut rng_borrow = self.rng.borrow_mut();
-                sm.as_ref().unwrap().handle(command, payload, &mut ops, &self.pairing_state, rng_borrow.deref_mut())
+                sm.as_ref().unwrap().handle(command, payload, &mut ops, rng_borrow.deref_mut())
             }
             else {
                 match command {
