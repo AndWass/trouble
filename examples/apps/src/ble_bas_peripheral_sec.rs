@@ -68,9 +68,11 @@ where
                 Err(e) => {
                     #[cfg(feature = "defmt")]
                     let e = defmt::Debug2Format(&e);
-                    panic!("[adv] error: {:?}", e);
+                    warn!("[adv] error: {:?}", e);
                 }
             }
+
+            Timer::after_secs(1).await;
         }
     })
     .await;

@@ -7,7 +7,7 @@ use crate::security_manager::pairing::util::{
 };
 use crate::security_manager::pairing::PairingOps;
 use crate::security_manager::types::{AuthReq, BondingFlag, Command, IoCapabilities, PairingFeatures};
-use crate::security_manager::{PairingData, PairingMethod, PairingState, Reason};
+use crate::security_manager::{PairingMethod, Reason};
 use crate::{Address, Error, LongTermKey, PacketPool};
 use core::cell::RefCell;
 use core::ops::Deref;

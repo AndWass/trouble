@@ -266,7 +266,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 #[cfg(feature = "security")]
                 {
                     storage.encrypted = false;
-                    let _ = self.security_manager.disconnect(h);
+                    let _ = self.security_manager.disconnect(h, storage.peer_identity);
                 }
                 return Ok(());
             }
@@ -520,14 +520,14 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         false
     }
 
-    pub(crate) async fn handle_security_channel(&self, handle: ConnHandle, pdu: Pdu<P::Packet>) -> Result<(), Error> {
+    pub(crate) fn handle_security_channel(&self, handle: ConnHandle, pdu: Pdu<P::Packet>) -> Result<(), Error> {
         #[cfg(feature = "security")]
         {
             let state = self.state.borrow();
             for storage in state.connections.iter() {
                 match storage.state {
                     ConnectionState::Connected if storage.handle.unwrap() == handle => {
-                        if let Err(error) = self.security_manager.handle(pdu, self, storage).await {
+                        if let Err(error) = self.security_manager.handle(pdu, self, storage) {
                             error!("Failed to handle security manager packet, {:?}", error);
                             return Err(error);
                         }

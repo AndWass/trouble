@@ -6,10 +6,10 @@ use crate::security_manager::pairing::util::{
 };
 use crate::security_manager::pairing::PairingOps;
 use crate::security_manager::types::{AuthReq, BondingFlag, Command, IoCapabilities, PairingFeatures};
-use crate::security_manager::{PairingMethod, PairingState, Reason};
+use crate::security_manager::{Reason};
 use crate::{Address, Error, LongTermKey, PacketPool};
 use core::cell::RefCell;
-use core::ops::{Deref, DerefMut};
+use core::ops::{DerefMut};
 use rand_chacha::ChaCha12Rng;
 use rand_core::RngCore;
 
@@ -83,6 +83,9 @@ struct PairingData {
 }
 
 impl Pairing {
+    pub fn peer_address(&self) -> Address {
+        self.pairing_data.borrow().peer_address
+    }
     pub fn new(local_address: Address, peer_address: Address) -> Self {
         Self {
             current_step: RefCell::new(Step::WaitingPairingRequest),

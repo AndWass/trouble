@@ -281,7 +281,7 @@ where
         true
     }
 
-    async fn handle_acl(&self, acl: AclPacket<'_>) -> Result<(), Error> {
+    fn handle_acl(&self, acl: AclPacket<'_>) -> Result<(), Error> {
         self.connections.received(acl.handle())?;
         let handle = acl.handle();
         let (header, pdu) = match acl.boundary_flag() {
@@ -473,7 +473,7 @@ where
                 panic!("le signalling channel was fragmented, impossible!");
             }
             L2CAP_CID_LE_U_SECURITY_MANAGER => {
-                self.connections.handle_security_channel(acl.handle(), pdu).await?;
+                self.connections.handle_security_channel(acl.handle(), pdu)?;
             }
             other if other >= L2CAP_CID_DYN_START => match self.channels.dispatch(header.channel, pdu) {
                 Ok(_) => {}
@@ -751,7 +751,7 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
             // last = Instant::now();
             //        trace!("[host] polling took {} ms", (polled - started).as_millis());
             match result {
-                Ok(ControllerToHostPacket::Acl(acl)) => match host.handle_acl(acl).await {
+                Ok(ControllerToHostPacket::Acl(acl)) => match host.handle_acl(acl) {
                     Ok(_) => {}
                     Err(e) => {
                         warn!(
