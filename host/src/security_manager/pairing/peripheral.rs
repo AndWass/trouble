@@ -110,13 +110,20 @@ impl Pairing {
     }
 
     pub fn handle<P: PacketPool, OPS: PairingOps<P>>(&self, command: Command, payload: &[u8], ops: &mut OPS, rng: &mut ChaCha12Rng) -> Result<(), Error> {
-        self.handle_impl(CommandAndPayload {
+        match self.handle_impl(CommandAndPayload {
             payload,
             command
         }, ops, rng)
+        {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                self.current_step.replace(Step::Error(error.clone()));
+                Err(error)
+            },
+        }
     }
 
-    pub fn handle_impl<P: PacketPool, OPS: PairingOps<P>>(
+    fn handle_impl<P: PacketPool, OPS: PairingOps<P>>(
         &self,
         command: CommandAndPayload,
         ops: &mut OPS,
@@ -151,6 +158,7 @@ impl Pairing {
                     Self::handle_dhkey_ea(command.payload, pairing_data)?;
                     Self::send_dhkey_eb(ops, pairing_data)?;
                     ops.try_enable_encryption(&pairing_data.long_term_key)?;
+                    // TODO potentially send and/or receive keys after encryption has been enabled
                     Step::Success
                 }
 
