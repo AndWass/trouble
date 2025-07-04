@@ -345,6 +345,8 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         };
 
         if address != peer_address {
+            // TODO Is this correct? 
+            self.peripheral_pairing_sm.replace(None);
             return Err(Error::InvalidValue);
         }
 

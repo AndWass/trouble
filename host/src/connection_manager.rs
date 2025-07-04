@@ -626,6 +626,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                                 .await?;
                         }
                         // Emit the bonded event after enabling encryption
+                        // TODO is this correct?
                         self.post_event(index as u8, ConnectionEvent::Bonded { bond_info })
                             .await;
                     } else {

@@ -1109,10 +1109,7 @@ impl<'d, C: Controller, P: PacketPool> ControlRunner<'d, C, P> {
                     Either4::Fourth(request) => {
                         #[cfg(feature = "security")]
                         {
-                            let event_data = match request {
-                                Ok(e) => e,
-                                Err(_) => SecurityEventData::Timeout,
-                            };
+                            let event_data = request.unwrap_or_else(|_| SecurityEventData::Timeout);
                             host.connections.handle_security_event(host, event_data).await?;
                         }
                     }
