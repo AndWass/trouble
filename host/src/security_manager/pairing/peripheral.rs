@@ -4,7 +4,7 @@ use crate::security_manager::crypto::{Confirm, DHKey, MacKey, Nonce, PublicKey, 
 use crate::security_manager::pairing::util::{
     make_dhkey_check_packet, make_pairing_random, make_public_key_packet, prepare_packet, CommandAndPayload,
 };
-use crate::security_manager::pairing::PairingOps;
+use crate::security_manager::pairing::{Event, PairingOps};
 use crate::security_manager::types::{AuthReq, BondingFlag, Command, IoCapabilities, PairingFeatures};
 use crate::security_manager::{Reason};
 use crate::{Address, Error, LongTermKey, PacketPool};
@@ -22,6 +22,7 @@ enum Step {
     WaitingNumericComparisonResult,
     // TODO add pass key entry and OOB
     WaitingDHKeyEa,
+    WaitingLinkEncrypted,
     Success,
     Error(Error),
 }
@@ -109,7 +110,7 @@ impl Pairing {
         }
     }
 
-    pub fn handle<P: PacketPool, OPS: PairingOps<P>>(&self, command: Command, payload: &[u8], ops: &mut OPS, rng: &mut ChaCha12Rng) -> Result<(), Error> {
+    pub fn handle_l2cap_command<P: PacketPool, OPS: PairingOps<P>>(&self, command: Command, payload: &[u8], ops: &mut OPS, rng: &mut ChaCha12Rng) -> Result<(), Error> {
         match self.handle_impl(CommandAndPayload {
             payload,
             command
@@ -120,6 +121,28 @@ impl Pairing {
                 self.current_step.replace(Step::Error(error.clone()));
                 Err(error)
             },
+        }
+    }
+
+    pub fn handle_event(&self, event: Event) -> Result<(), Error> {
+        let current_state = self.current_step.borrow().clone();
+        let next_state = match (current_state, event) {
+            (Step::WaitingLinkEncrypted, Event::LinkEncrypted) => {
+                // TODO send key data
+                Step::Success
+            },
+            _ => Step::Error(Error::InvalidState),
+        };
+
+        match next_state {
+            Step::Error(x) => {
+                self.current_step.replace(Step::Error(x.clone()));
+                Err(x)
+            },
+            x => {
+                self.current_step.replace(x);
+                Ok(())
+            }
         }
     }
 
@@ -159,7 +182,7 @@ impl Pairing {
                     Self::send_dhkey_eb(ops, pairing_data)?;
                     ops.try_enable_encryption(&pairing_data.long_term_key)?;
                     // TODO potentially send and/or receive keys after encryption has been enabled
-                    Step::Success
+                    Step::WaitingLinkEncrypted
                 }
 
                 _ => return Err(Error::InvalidState),

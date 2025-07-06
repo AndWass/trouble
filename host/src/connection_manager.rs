@@ -527,7 +527,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
             for storage in state.connections.iter() {
                 match storage.state {
                     ConnectionState::Connected if storage.handle.unwrap() == handle => {
-                        if let Err(error) = self.security_manager.handle(pdu, self, storage) {
+                        if let Err(error) = self.security_manager.handle_l2cap_command(pdu, self, storage) {
                             error!("Failed to handle security manager packet, {:?}", error);
                             return Err(error);
                         }
@@ -543,8 +543,22 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
     pub(crate) fn handle_security_hci_event(&self, event: bt_hci::event::Event) -> Result<(), Error> {
         #[cfg(feature = "security")]
         {
-            self.security_manager.handle_event(&event)?;
 
+            {
+                let state = self.state.borrow();
+                for storage in state.connections.iter() {
+                    match storage.state {
+                        ConnectionState::Connected if storage.handle.unwrap() == handle => {
+                            if let Err(error) = self.security_manager.handle_l2cap_command(pdu, self, storage) {
+                                error!("Failed to handle security manager packet, {:?}", error);
+                                return Err(error);
+                            }
+                            break;
+                        }
+                        _ => (),
+                    }
+                }
+            }
             if let bt_hci::event::Event::EncryptionChangeV1(event_data) = event {
                 self.with_connected_handle(event_data.handle, |storage| {
                     storage.encrypted = event_data.enabled;

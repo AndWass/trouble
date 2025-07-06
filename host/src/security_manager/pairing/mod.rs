@@ -45,3 +45,7 @@ where
         self.connection_handle
     }
 }
+
+pub enum Event {
+    LinkEncrypted,
+}

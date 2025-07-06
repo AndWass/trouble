@@ -4,8 +4,8 @@
 
 mod constants;
 mod crypto;
-mod types;
 mod pairing;
+mod types;
 
 use core::cell::RefCell;
 use core::future::{poll_fn, Future};
@@ -22,16 +22,16 @@ use embassy_time::{Duration, Instant, TimeoutError, WithTimeout};
 use heapless::Vec;
 use rand_chacha::ChaCha12Rng;
 use rand_core::SeedableRng;
+use types::Command;
 pub use types::Reason;
-use types::{Command};
 
 use crate::connection_manager::{ConnectionManager, ConnectionStorage};
 use crate::pdu::Pdu;
 use crate::prelude::Connection;
-use crate::types::l2cap::L2CAP_CID_LE_U_SECURITY_MANAGER;
-use crate::{Address, Error, Identity, PacketPool};
 use crate::security_manager::pairing::pairings_ops_from_fn;
 use crate::security_manager::pairing::peripheral::Pairing;
+use crate::types::l2cap::L2CAP_CID_LE_U_SECURITY_MANAGER;
+use crate::{Address, Error, Identity, PacketPool};
 
 /// Events of interest to the security manager
 pub(crate) enum SecurityEventData {
@@ -299,11 +299,12 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         Vec::from_slice(self.state.borrow().bond.as_slice()).unwrap()
     }
 
-    fn handle_peripheral<P: PacketPool>(&self,
-                         pdu: Pdu<P::Packet>,
-                         connections: &ConnectionManager<'_, P>,
-                         storage: &ConnectionStorage<P::Packet>,) -> Result<(), Error>
-    {
+    fn handle_peripheral<P: PacketPool>(
+        &self,
+        pdu: Pdu<P::Packet>,
+        connections: &ConnectionManager<'_, P>,
+        storage: &ConnectionStorage<P::Packet>,
+    ) -> Result<(), Error> {
         let handle = storage.handle.ok_or(Error::InvalidValue)?;
         let peer_address_kind = storage.peer_addr_kind.ok_or(Error::InvalidValue)?;
         let peer_identity = storage.peer_identity.ok_or(Error::InvalidValue)?;
@@ -345,48 +346,61 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         };
 
         if address != peer_address {
-            // TODO Is this correct? 
+            // TODO Is this correct?
             self.peripheral_pairing_sm.replace(None);
             return Err(Error::InvalidValue);
         }
 
         info!("Pairing step with new state machine!");
-        let sm = {
-            self.peripheral_pairing_sm.borrow()
-        };
-        let mut ops = pairings_ops_from_fn(handle, |tx| {
-            self.try_send_packet(tx, connections, handle)
-        }, |ltk: &LongTermKey| {
-            info!("Enabling encryption for {}", peer_identity);
-            //let bond_info = self.store_pairing()?;
-            let bond_info = BondInformation {
-                ltk: ltk.clone(),
-                identity: peer_identity.clone(),
-            };
-            self.add_bond_information(bond_info.clone())?;
-            self.try_send_event(SecurityEventData::EnableEncryption(handle, bond_info))
-        });
+        let sm = { self.peripheral_pairing_sm.borrow() };
+        let mut ops = pairings_ops_from_fn(
+            handle,
+            |tx| self.try_send_packet(tx, connections, handle),
+            |ltk: &LongTermKey| {
+                info!("Enabling encryption for {}", peer_identity);
+                //let bond_info = self.store_pairing()?;
+                let bond_info = BondInformation {
+                    ltk: ltk.clone(),
+                    identity: peer_identity.clone(),
+                };
+                self.add_bond_information(bond_info.clone())?;
+                self.try_send_event(SecurityEventData::EnableEncryption(handle, bond_info))
+            },
+        );
         let mut rng_borrow = self.rng.borrow_mut();
-        sm.as_ref().unwrap().handle(command, payload, &mut ops, rng_borrow.deref_mut())
+        sm.as_ref()
+            .unwrap()
+            .handle_l2cap_command(command, payload, &mut ops, rng_borrow.deref_mut())
     }
 
     /// Handle packet
-    pub(crate) fn handle<P: PacketPool>(
+    pub(crate) fn handle_l2cap_command<P: PacketPool>(
         &self,
         pdu: Pdu<P::Packet>,
         connections: &ConnectionManager<'_, P>,
         storage: &ConnectionStorage<P::Packet>,
     ) -> Result<(), Error> {
-        // Should it be possible to handle multiple concurrent pairings?
         let role = storage.role.ok_or(Error::InvalidValue)?;
 
         let result = if role == LeConnRole::Peripheral {
             self.handle_peripheral(pdu, connections, storage)
-        }
-        else {
+        } else {
             todo!()
         };
-        if let Err(ref error) = result {
+
+        if let Err(e) = self.handle_security_error(connections, storage, &result) {
+            error!("[security manager] Failed sending pairing failed message! {:?}", e);
+        }
+        result
+    }
+
+    fn handle_security_error<P: PacketPool>(
+        &self,
+        connections: &ConnectionManager<P>,
+        storage: &ConnectionStorage<<P as PacketPool>::Packet>,
+        result: &Result<(), Error>,
+    ) -> Result<(), Error> {
+        if let Err(error) = result {
             let reason = if let Error::Security(secuity_error) = error {
                 *secuity_error
             } else {
@@ -412,7 +426,8 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
             }
             self.pairing_result(reason)?;
         }
-        result
+
+        Ok(())
     }
 
     /// Initiate pairing
@@ -447,11 +462,22 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     }
 
     /// Handle recevied events from HCI
-    pub(crate) fn handle_event(&self, event: &Event) -> Result<(), Error> {
+    pub(crate) fn handle_hci_event<P: PacketPool>(&self, event: &Event, connections: &ConnectionManager<'_, P>, storage: &ConnectionStorage<<P as PacketPool>::Packet>) -> Result<(), Error> {
         match event {
             Event::EncryptionChangeV1(event_data) => match event_data.status.to_result() {
                 Ok(()) => {
-                    warn!("[security manager] Handle Encryption Changed event {}", event_data.enabled);
+                    warn!(
+                        "[security manager] Handle Encryption Changed event {}",
+                        event_data.enabled
+                    );
+                    if event_data.enabled {
+                        let sm = self.peripheral_pairing_sm.borrow();
+                        if let Some(sm) = &*sm {
+                            let res = sm.handle_event(pairing::Event::LinkEncrypted);
+                            let _ = self.handle_security_error(connections, storage, &res);
+                            res?;
+                        }
+                    }
                 }
                 Err(error) => {
                     error!("[security manager] Encryption Changed Handle Error {}", error);
