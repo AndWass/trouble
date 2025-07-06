@@ -120,7 +120,7 @@ async fn gatt_events_task(server: &Server<'_>, conn: &GattConnection<'_, '_, Def
                             info!("[gatt] Read Event to Level Characteristic: {:?}", value);
                         }
                         #[cfg(feature = "security")]
-                        if conn.raw().encrypted() {
+                        if conn.raw().security_level().encrypted() {
                             None
                         } else {
                             Some(AttErrorCode::INSUFFICIENT_ENCRYPTION)
@@ -133,9 +133,10 @@ async fn gatt_events_task(server: &Server<'_>, conn: &GattConnection<'_, '_, Def
                             info!("[gatt] Write Event to Level Characteristic: {:?}", event.data());
                         }
                         #[cfg(feature = "security")]
-                        if conn.raw().encrypted() {
+                        if conn.raw().security_level().encrypted() {
                             None
                         } else {
+                            let _ = conn.raw().request_security_level(SecurityLevel::EncryptedNoAuth);
                             Some(AttErrorCode::INSUFFICIENT_ENCRYPTION)
                         }
                         #[cfg(not(feature = "security"))]

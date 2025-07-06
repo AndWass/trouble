@@ -11,7 +11,7 @@ use embassy_sync::waitqueue::WakerRegistration;
 #[cfg(feature = "security")]
 use embassy_time::TimeoutError;
 
-use crate::connection::{Connection, ConnectionEvent};
+use crate::connection::{Connection, ConnectionEvent, SecurityLevel};
 use crate::pdu::Pdu;
 use crate::prelude::sar::PacketReassembly;
 #[cfg(feature = "security")]
@@ -265,7 +265,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 storage.metrics.reset();
                 #[cfg(feature = "security")]
                 {
-                    storage.encrypted = false;
+                    storage.security_level = SecurityLevel::NoEncryptionNoAuth;
                     let _ = self.security_manager.disconnect(h, storage.peer_identity);
                 }
                 return Ok(());
@@ -511,13 +511,25 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         mtu
     }
 
-    pub(crate) fn get_encrypted(&self, index: u8) -> bool {
+    pub(crate) fn request_security_level(&self, index: u8, level: SecurityLevel) -> Result<(), Error> {
         #[cfg(feature = "security")]
         {
-            self.state.borrow().connections[index as usize].encrypted
+            let current_level = self.get_security_level(index);
+            if current_level >= level {
+                return Ok(());
+            }
+            self.state.borrow_mut().connections[index as usize].requested_security_level = level;
+            self.security_manager.initiate(self, &self.state.borrow().connections[index as usize])
+        }
+    }
+
+    pub(crate) fn get_security_level(&self, index: u8) -> SecurityLevel {
+        #[cfg(feature = "security")]
+        {
+            self.state.borrow().connections[index as usize].security_level
         }
         #[cfg(not(feature = "security"))]
-        false
+        SecurityLevel::NoEncryptionNoAuth
     }
 
     pub(crate) fn handle_security_channel(&self, handle: ConnHandle, pdu: Pdu<P::Packet>) -> Result<(), Error> {
@@ -544,24 +556,13 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         #[cfg(feature = "security")]
         {
 
-            {
-                let state = self.state.borrow();
-                for storage in state.connections.iter() {
-                    match storage.state {
-                        ConnectionState::Connected if storage.handle.unwrap() == handle => {
-                            if let Err(error) = self.security_manager.handle_l2cap_command(pdu, self, storage) {
-                                error!("Failed to handle security manager packet, {:?}", error);
-                                return Err(error);
-                            }
-                            break;
-                        }
-                        _ => (),
-                    }
-                }
-            }
             if let bt_hci::event::Event::EncryptionChangeV1(event_data) = event {
                 self.with_connected_handle(event_data.handle, |storage| {
-                    storage.encrypted = event_data.enabled;
+                    if let Err(error) = self.security_manager.handle_hci_event(&event, self, storage) {
+                        error!("Failed to handle security manager packet, {:?}", error);
+                        return Err(error);
+                    }
+                    storage.security_level = self.security_manager.get_security_level::<P>(storage);
                     Ok(())
                 })?;
             }
@@ -709,7 +710,9 @@ pub struct ConnectionStorage<P> {
     #[cfg(feature = "connection-metrics")]
     pub metrics: Metrics,
     #[cfg(feature = "security")]
-    pub encrypted: bool,
+    pub security_level: SecurityLevel,
+    #[cfg(feature = "security")]
+    pub requested_security_level: SecurityLevel,
     pub events: EventChannel,
     pub reassembly: PacketReassembly<P>,
     #[cfg(feature = "gatt")]
@@ -793,7 +796,9 @@ impl<P> ConnectionStorage<P> {
             #[cfg(feature = "connection-metrics")]
             metrics: Metrics::new(),
             #[cfg(feature = "security")]
-            encrypted: false,
+            security_level: SecurityLevel::NoEncryptionNoAuth,
+            #[cfg(feature = "security")]
+            requested_security_level: SecurityLevel::NoEncryptionNoAuth,
             events: EventChannel::new(),
             #[cfg(feature = "gatt")]
             gatt: GattChannel::new(),

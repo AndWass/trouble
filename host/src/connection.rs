@@ -20,6 +20,32 @@ use crate::prelude::{AttributeServer, GattConnection};
 use crate::security_manager::BondInformation;
 use crate::{BleHostError, Error, Identity, PacketPool, Stack};
 
+/// Security level of a connection
+///
+/// This describes the various security levels that are supported.
+///
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub enum SecurityLevel {
+    /// No encryption and no authentication. All connections start on this security level.
+    NoEncryptionNoAuth,
+    /// Encrypted communication, but not authenticated. Does not provide MITM protection.
+    EncryptedNoAuth,
+    /// Encrypted and authenticated security level. MITM protected.
+    EncryptedAuthenticated,
+}
+
+impl SecurityLevel {
+    /// Check if the security level is encrypted.
+    pub fn encrypted(&self) -> bool {
+        !matches!(self, SecurityLevel::NoEncryptionNoAuth)
+    }
+
+    /// Check if the security level is authenticated.
+    pub fn authenticated(&self) -> bool {
+        matches!(self, SecurityLevel::EncryptedAuthenticated)
+    }
+}
+
 /// Connection configuration.
 pub struct ConnectConfig<'d> {
     /// Scan configuration to use while connecting.
@@ -221,10 +247,20 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
     pub fn peer_identity(&self) -> Identity {
         self.manager.peer_identity(self.index)
     }
+    /// Request a certain security level
+    ///
+    /// For a peripheral this may cause the peripheral to send a security request. For a central
+    /// this may cause the central to send a pairing request.
+    ///
+    /// If the link is already encrypted then this will always generate an error.
+    ///
+    pub fn request_security_level(&self, level: SecurityLevel) -> Result<(), Error> {
+        self.manager.request_security_level(self.index, level)
+    }
 
     /// Get the encrypted state of the connection
-    pub fn encrypted(&self) -> bool {
-        self.manager.get_encrypted(self.index)
+    pub fn security_level(&self) -> SecurityLevel {
+        self.manager.get_security_level(self.index)
     }
 
     /// Request connection to be disconnected.

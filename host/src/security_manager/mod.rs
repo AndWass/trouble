@@ -25,13 +25,14 @@ use rand_core::SeedableRng;
 use types::Command;
 pub use types::Reason;
 
+use crate::connection::SecurityLevel;
 use crate::connection_manager::{ConnectionManager, ConnectionStorage};
 use crate::pdu::Pdu;
-use crate::prelude::Connection;
 use crate::security_manager::pairing::pairings_ops_from_fn;
 use crate::security_manager::pairing::peripheral::Pairing;
 use crate::types::l2cap::L2CAP_CID_LE_U_SECURITY_MANAGER;
 use crate::{Address, Error, Identity, PacketPool};
+use crate::security_manager::types::{AuthReq, BondingFlag};
 
 /// Events of interest to the security manager
 pub(crate) enum SecurityEventData {
@@ -339,7 +340,11 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         let address = {
             let mut state_machine = self.peripheral_pairing_sm.borrow_mut();
             if state_machine.is_none() {
-                *state_machine = Some(Pairing::new(self.state.borrow().local_address.unwrap(), peer_address));
+                *state_machine = Some(Pairing::new(
+                    self.state.borrow().local_address.unwrap(),
+                    peer_address,
+                    storage.requested_security_level,
+                ));
             }
 
             state_machine.as_ref().unwrap().peer_address()
@@ -431,8 +436,30 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     }
 
     /// Initiate pairing
-    pub fn initiate<P: PacketPool>(&self, connection: &Connection<P>) -> Result<(), Error> {
-        todo!()
+    pub fn initiate<P: PacketPool>(
+        &self,
+        connections: &ConnectionManager<'_, P>,
+        storage: &ConnectionStorage<<P as PacketPool>::Packet>,
+    ) -> Result<(), Error> {
+        if storage.role.ok_or(Error::InvalidValue)? == LeConnRole::Peripheral {
+            if storage.security_level != SecurityLevel::NoEncryptionNoAuth {
+                Err(Error::Security(Reason::UnspecifiedReason))
+            } else if storage.requested_security_level > storage.security_level {
+                let handle = storage.handle.ok_or(Error::InvalidValue)?;
+                let mut req = AuthReq::new(BondingFlag::NoBonding);
+                req.set_man_in_the_middle(storage.requested_security_level.authenticated());
+                let mut security_request = self.prepare_packet(Command::SecurityRequest, connections)?;
+                let payload = security_request.payload_mut();
+                payload[0] = req.into();
+                connections.try_outbound(handle, security_request.into_pdu())?;
+                Ok(())
+            } else {
+                Ok(())
+            }
+        }
+        else {
+            todo!()
+        }
     }
 
     /// Cancel pairing after timeout
@@ -461,8 +488,20 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         self.pairing_result(reason)
     }
 
+    pub(crate) fn get_security_level<P: PacketPool>(
+        &self,
+        storage: &ConnectionStorage<<P as PacketPool>::Packet>,
+    ) -> SecurityLevel {
+        SecurityLevel::NoEncryptionNoAuth
+    }
+
     /// Handle recevied events from HCI
-    pub(crate) fn handle_hci_event<P: PacketPool>(&self, event: &Event, connections: &ConnectionManager<'_, P>, storage: &ConnectionStorage<<P as PacketPool>::Packet>) -> Result<(), Error> {
+    pub(crate) fn handle_hci_event<P: PacketPool>(
+        &self,
+        event: &Event,
+        connections: &ConnectionManager<'_, P>,
+        storage: &ConnectionStorage<<P as PacketPool>::Packet>,
+    ) -> Result<(), Error> {
         match event {
             Event::EncryptionChangeV1(event_data) => match event_data.status.to_result() {
                 Ok(()) => {

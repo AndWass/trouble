@@ -456,7 +456,7 @@ const AUTH_REQ_CT2: u8 = 0b0010_0000;
 impl AuthReq {
     /// Build a AuthReq octet
     pub fn new(bonding: BondingFlag) -> Self {
-        AuthReq((bonding as u8) | AUTH_REQ_MITM | AUTH_REQ_SECURE_CONNECTION)
+        AuthReq((bonding as u8) | AUTH_REQ_SECURE_CONNECTION)
     }
     /// Bond requested
     pub fn bond(&self) -> BondingFlag {
@@ -469,6 +469,14 @@ impl AuthReq {
     /// Man in the middle (MITM) protection requested
     pub fn man_in_the_middle(&self) -> bool {
         (self.0 & AUTH_REQ_MITM) == AUTH_REQ_MITM
+    }
+    pub fn set_man_in_the_middle(&mut self, mitm: bool) {
+        if mitm {
+            self.0 |= AUTH_REQ_MITM;
+        }
+        else {
+            self.0 &= !AUTH_REQ_MITM;
+        }
     }
     /// LE Secure Connections supported
     pub fn secure_connection(&self) -> bool {

@@ -12,6 +12,7 @@ use core::cell::RefCell;
 use core::ops::{DerefMut};
 use rand_chacha::ChaCha12Rng;
 use rand_core::RngCore;
+use crate::connection::SecurityLevel;
 
 #[derive(Debug, Clone)]
 enum Step {
@@ -87,13 +88,15 @@ impl Pairing {
     pub fn peer_address(&self) -> Address {
         self.pairing_data.borrow().peer_address
     }
-    pub fn new(local_address: Address, peer_address: Address) -> Self {
+    pub fn new(local_address: Address, peer_address: Address, requested_level: SecurityLevel) -> Self {
+        let mut local_features = PairingFeatures::default();
+        local_features.security_properties.set_man_in_the_middle(requested_level.authenticated());
         Self {
             current_step: RefCell::new(Step::WaitingPairingRequest),
             pairing_data: RefCell::new(PairingData {
                 local_address,
                 peer_address,
-                local_features: PairingFeatures::default(),
+                local_features,
                 peer_features: PairingFeatures::default(),
                 peer_public_key: None,
                 local_public_key: None,
@@ -388,6 +391,7 @@ mod tests {
     use bt_hci::param::ConnHandle;
     use rand_chacha::ChaCha12Core;
     use rand_core::SeedableRng;
+    use crate::prelude::SecurityLevel;
 
     #[derive(Debug)]
     struct TestPacket(heapless::Vec<u8, 128>);
@@ -456,11 +460,11 @@ mod tests {
             &pairing_data,
         );*/
         let pairing = Pairing::new(Address::random([1, 2, 3, 4, 5, 6]),
-                                   Address::random([7, 8, 9, 10, 11, 12]));
+                                   Address::random([7, 8, 9, 10, 11, 12]), SecurityLevel::EncryptedNoAuth);
         let mut rng = ChaCha12Core::seed_from_u64(1).into();
         // Central sends pairing request, expects pairing response from peripheral
         pairing
-            .handle::<HeaplessPool, _>(
+            .handle_l2cap_command::<HeaplessPool, _>(
                 Command::PairingRequest,
                 &[0x03, 0, 0x08, 16, 0, 0],
                 &mut pairing_ops,
@@ -496,7 +500,7 @@ mod tests {
         let secret_key = SecretKey::new(&mut rng);
         let packet = make_public_key_packet::<HeaplessPool>(&secret_key.public_key()).unwrap();
         pairing
-            .handle::<HeaplessPool, _>(
+            .handle_l2cap_command::<HeaplessPool, _>(
                 Command::PairingPublicKey,
                 packet.payload(),
                 &mut pairing_ops,
@@ -539,7 +543,7 @@ mod tests {
 
         // Central sends Nonce, expects Nonce
         pairing
-            .handle::<HeaplessPool, _>(
+            .handle_l2cap_command::<HeaplessPool, _>(
                 Command::PairingRandom,
                 &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
                 &mut pairing_ops,
@@ -561,7 +565,7 @@ mod tests {
             assert_eq!(pairing_ops.encryptions.len(), 0);
         }
         pairing
-            .handle::<HeaplessPool, _>(
+            .handle_l2cap_command::<HeaplessPool, _>(
                 Command::PairingDhKeyCheck,
                 &[
                     0x70, 0xa9, 0xf1, 0xd0, 0xcf, 0x52, 0x84, 0xe9, 0xfc, 0x36, 0x9b, 0x84, 0x35, 0x13, 0xc5, 0xed,
