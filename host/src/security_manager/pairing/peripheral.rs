@@ -5,7 +5,7 @@ use crate::security_manager::pairing::util::{
     make_dhkey_check_packet, make_pairing_random, make_public_key_packet, prepare_packet, CommandAndPayload,
 };
 use crate::security_manager::pairing::{Event, PairingOps};
-use crate::security_manager::types::{AuthReq, BondingFlag, Command, IoCapabilities, PairingFeatures};
+use crate::security_manager::types::{AuthReq, BondingFlag, Command, ConfirmValue, IoCapabilities, PairingFeatures};
 use crate::security_manager::{Reason};
 use crate::{Address, Error, LongTermKey, PacketPool};
 use core::cell::RefCell;
@@ -176,9 +176,7 @@ impl Pairing {
                 (Step::WaitingNumericComparisonRandom(_), Command::PairingRandom) => {
                     Self::handle_numeric_compare_random(command.payload, pairing_data)?;
                     Self::send_nonce(ops, &pairing_data.local_nonce)?;
-                    Self::numeric_compare_confirm(event_handler, pairing_data)?;
-                    // TODO potentially wait for user confirmation
-                    Step::WaitingDHKeyEa
+                    Self::numeric_compare_confirm(event_handler, pairing_data)?
                 }
 
                 (Step::WaitingDHKeyEa, Command::PairingDhKeyCheck) => {
@@ -370,14 +368,32 @@ impl Pairing {
         ops.try_send_packet(check)
     }
 
-    fn numeric_compare_confirm(event_handler: &dyn EventHandler, pairing_data: &PairingData) -> Result<(), Error> {
+    fn numeric_compare_confirm(event_handler: &dyn EventHandler, pairing_data: &PairingData) -> Result<Step, Error> {
         let peer_public_key = pairing_data.peer_public_key.ok_or(Error::InvalidValue)?;
         let local_public_key = pairing_data.local_public_key.ok_or(Error::InvalidValue)?;
         let vb = pairing_data.peer_nonce.g2(peer_public_key.x(), local_public_key.x(), &pairing_data.local_nonce);
 
-        // TODO the display numeric should not always be displayed!
-        event_handler.on_display_security_numeric(vb.0);
-        Ok(())
+        let local_io = pairing_data.local_features.io_capabilities;
+        let remote_io = pairing_data.peer_features.io_capabilities;
+        if local_io == IoCapabilities::DisplayYesNo || local_io == IoCapabilities::KeyboardDisplay {
+            let confirm_result = match remote_io {
+                IoCapabilities::DisplayYesNo | IoCapabilities::KeyboardDisplay => {
+                    event_handler.on_display_confirm_security_numeric(ConfirmValue::new(vb.0))
+                },
+                _ => {
+                    return Ok(Step::WaitingDHKeyEa);
+                }
+            };
+
+            match confirm_result {
+                Some(false) => Err(Error::Security(Reason::NumericComparisonFailed)),
+                Some(true) => Ok(Step::WaitingDHKeyEa),
+                None => Ok(Step::WaitingNumericComparisonResult)
+            }
+        }
+        else {
+            Ok(Step::WaitingDHKeyEa)
+        }
     }
 }
 
@@ -499,12 +515,12 @@ mod tests {
             assert_eq!(sent_packets.len(), 1);
             let pairing_response = &sent_packets[0];
             assert_eq!(pairing_response.command, Command::PairingResponse);
-            assert_eq!(pairing_response.payload(), &[0x03, 0, 12, 16, 0, 0]);
+            assert_eq!(pairing_response.payload(), &[0x03, 0, 8, 16, 0, 0]);
             assert_eq!(
                 pairing_data.local_features,
                 PairingFeatures {
                     io_capabilities: IoCapabilities::NoInputNoOutput,
-                    security_properties: 12.into(),
+                    security_properties: 8.into(),
                     ..Default::default()
                 }
             );
@@ -601,7 +617,7 @@ mod tests {
             assert_eq!(sent_packets[4].command, Command::PairingDhKeyCheck);
             assert_eq!(
                 sent_packets[4].payload(),
-                [22, 123, 0, 74, 239, 81, 163, 188, 71, 111, 251, 117, 54, 186, 205, 3]
+                [161, 50, 135, 68, 154, 19, 105, 76, 55, 97, 207, 61, 193, 29, 234, 92]
             );
             assert_eq!(pairing_ops.encryptions.len(), 1);
             assert!(matches!(pairing_ops.encryptions[0], LongTermKey(_)));

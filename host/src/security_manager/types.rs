@@ -347,6 +347,33 @@ impl defmt::Format for IoCapabilities {
     }
 }
 
+pub struct ConfirmValue {
+    value: u32,
+    confirmed: bool,
+}
+
+impl ConfirmValue {
+    pub(crate) fn new(value: u32) -> Self {
+        Self {
+            value,
+            confirmed: false,
+        }
+    }
+    pub fn value(&self) -> u32 {
+        self.value
+    }
+
+    pub fn yes(mut self) -> Self {
+        self.confirmed = true;
+        self
+    }
+
+    pub fn no(mut self) -> Self {
+        self.confirmed = false;
+        self
+    }
+}
+
 /// Out of band (OOB) authentication data
 // ([Vol 3] Part H, Section 2.3.3).
 #[derive(Debug, Clone, Copy, PartialEq)]

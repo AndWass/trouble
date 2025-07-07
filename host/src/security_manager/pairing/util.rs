@@ -1,8 +1,102 @@
 use crate::pdu::Pdu;
 use crate::security_manager::crypto::{Check, DHKey, MacKey, Nonce, PublicKey};
-use crate::security_manager::types::Command;
-use crate::security_manager::{Reason, TxPacket};
+use crate::security_manager::types::{Command, PairingFeatures, UseOutOfBand};
+use crate::security_manager::{IoCapabilities, Reason, TxPacket};
 use crate::{Address, Error, LongTermKey, PacketPool};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PassKeyEntryAction {
+    Display,
+    Input,
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for PassKeyEntryAction {
+    fn format(&self, fmt: defmt::Formatter) {
+        defmt::write!(fmt, "{:?}", self)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PairingMethod
+{
+    JustWorks,
+    NumericComparison,
+    PassKeyEntry {
+        central: PassKeyEntryAction,
+        peripheral: PassKeyEntryAction
+    },
+    OutOfBand,
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for PairingMethod {
+    fn format(&self, fmt: defmt::Formatter) {
+        defmt::write!(fmt, "{:?}", self)
+    }
+}
+
+pub fn choose_pairing_method(central: PairingFeatures, peripheral: PairingFeatures) -> PairingMethod {
+    if !central.security_properties.man_in_the_middle() && !peripheral.security_properties.man_in_the_middle() {
+        PairingMethod::JustWorks
+    }
+    else if matches!(central.use_oob, UseOutOfBand::Present) || matches!(peripheral.use_oob, UseOutOfBand::Present) {
+        PairingMethod::OutOfBand
+    }
+    else {
+        if peripheral.io_capabilities == IoCapabilities::DisplayOnly {
+            match central.io_capabilities {
+                IoCapabilities::KeyboardOnly | IoCapabilities::KeyboardDisplay => PairingMethod::PassKeyEntry {
+                    central: PassKeyEntryAction::Input,
+                    peripheral: PassKeyEntryAction::Display
+                },
+                _ => PairingMethod::JustWorks
+            }
+        }
+        else if peripheral.io_capabilities == IoCapabilities::DisplayYesNo {
+            match central.io_capabilities {
+                IoCapabilities::DisplayYesNo | IoCapabilities::KeyboardDisplay => PairingMethod::NumericComparison,
+                IoCapabilities::KeyboardOnly => PairingMethod::PassKeyEntry {
+                    central: PassKeyEntryAction::Input,
+                    peripheral: PassKeyEntryAction::Display
+                },
+                _ => PairingMethod::JustWorks
+            }
+        }
+        else if peripheral.io_capabilities == IoCapabilities::KeyboardOnly {
+            match central.io_capabilities {
+                IoCapabilities::NoInputNoOutput => PairingMethod::JustWorks,
+                IoCapabilities::KeyboardOnly => PairingMethod::PassKeyEntry {
+                    central: PassKeyEntryAction::Input,
+                    peripheral: PassKeyEntryAction::Input
+                },
+                _ => PairingMethod::PassKeyEntry {
+                    central: PassKeyEntryAction::Display,
+                    peripheral: PassKeyEntryAction::Input
+                },
+            }
+        }
+        else if peripheral.io_capabilities == IoCapabilities::NoInputNoOutput {
+            PairingMethod::JustWorks
+        }
+        else {
+            // Local io == keyboard display
+            match central.io_capabilities {
+                IoCapabilities::DisplayOnly => PairingMethod::PassKeyEntry {
+                    central: PassKeyEntryAction::Display,
+                    peripheral: PassKeyEntryAction::Input,
+                },
+                IoCapabilities::KeyboardDisplay => PairingMethod::PassKeyEntry {
+                    central: PassKeyEntryAction::Input,
+                    peripheral: PassKeyEntryAction::Display,
+                },
+                IoCapabilities::NoInputNoOutput => PairingMethod::JustWorks,
+                _ => PairingMethod::NumericComparison,
+            }
+        }
+    }
+}
+
 pub fn prepare_packet<P: PacketPool>(command: Command) -> Result<TxPacket<P>, Error> {
     let packet = P::allocate().ok_or(Error::OutOfMemory)?;
     TxPacket::new(packet, command)
@@ -81,5 +175,61 @@ impl<'a> CommandAndPayload<'a> {
         };
 
         Ok(Self { command, payload })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::security_manager::types::{AuthReq, BondingFlag};
+    use super::*;
+
+    #[test]
+    fn oob_used() {
+        for p_oob in 0..1 {
+            for c_oob in 0..1 {
+                let p_oob = if p_oob == 1 { UseOutOfBand::Present } else { UseOutOfBand::NotPresent };
+                let c_oob = if c_oob == 1 { UseOutOfBand::Present } else { UseOutOfBand::NotPresent };
+                for p in 0u8..5 {
+                    for c in 0u8..5 {
+                        let peripheral = PairingFeatures {
+                            io_capabilities: p.try_into().unwrap(),
+                            use_oob: p_oob,
+                            security_properties: AuthReq::new(BondingFlag::NoBonding),
+                            initiator_key_distribution: 0.into(),
+                            responder_key_distribution: 0.into(),
+                            maximum_encryption_key_size: 16
+                        };
+                        let mut central = peripheral.clone();
+                        central.use_oob = c_oob;
+                        central.io_capabilities = c.try_into().unwrap();
+                        if p_oob == UseOutOfBand::NotPresent && c_oob == UseOutOfBand::NotPresent {
+                            assert_ne!(choose_pairing_method(central, peripheral), PairingMethod::OutOfBand);
+                        }
+                        else {
+                            assert_eq!(choose_pairing_method(central, peripheral), PairingMethod::OutOfBand);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn no_mitm_just_works() {
+        for p in 0u8..5 {
+            for c in 0u8..5 {
+                let peripheral = PairingFeatures {
+                    io_capabilities: p.try_into().unwrap(),
+                    use_oob: UseOutOfBand::NotPresent,
+                    security_properties: AuthReq::new(BondingFlag::NoBonding),
+                    initiator_key_distribution: 0.into(),
+                    responder_key_distribution: 0.into(),
+                    maximum_encryption_key_size: 16
+                };
+                let mut central = peripheral.clone();
+                central.io_capabilities = c.try_into().unwrap();
+                assert_eq!(choose_pairing_method(central, peripheral), PairingMethod::JustWorks);
+            }
+        }
     }
 }

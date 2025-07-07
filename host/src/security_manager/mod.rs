@@ -6,7 +6,7 @@ mod constants;
 mod crypto;
 mod pairing;
 mod types;
-pub use types::IoCapabilities;
+pub use types::{IoCapabilities, ConfirmValue};
 
 use core::cell::RefCell;
 use core::future::{poll_fn, Future};
