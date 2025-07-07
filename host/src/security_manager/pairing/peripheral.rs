@@ -13,6 +13,7 @@ use core::ops::{DerefMut};
 use rand_chacha::ChaCha12Rng;
 use rand_core::RngCore;
 use crate::connection::SecurityLevel;
+use crate::host::EventHandler;
 
 #[derive(Debug, Clone)]
 enum Step {
@@ -113,11 +114,11 @@ impl Pairing {
         }
     }
 
-    pub fn handle_l2cap_command<P: PacketPool, OPS: PairingOps<P>>(&self, command: Command, payload: &[u8], ops: &mut OPS, rng: &mut ChaCha12Rng) -> Result<(), Error> {
+    pub fn handle_l2cap_command<P: PacketPool, OPS: PairingOps<P>>(&self, command: Command, payload: &[u8], ops: &mut OPS, rng: &mut ChaCha12Rng, event_handler: &dyn EventHandler) -> Result<(), Error> {
         match self.handle_impl(CommandAndPayload {
             payload,
             command
-        }, ops, rng)
+        }, ops, rng, event_handler)
         {
             Ok(()) => Ok(()),
             Err(error) => {
@@ -154,6 +155,7 @@ impl Pairing {
         command: CommandAndPayload,
         ops: &mut OPS,
         rng: &mut ChaCha12Rng,
+        event_handler: &dyn EventHandler,
     ) -> Result<(), Error> {
         let current_step = self.current_step.borrow().clone();
         let mut pairing_data = self.pairing_data.borrow_mut();
@@ -161,7 +163,7 @@ impl Pairing {
         let next_step = {
             match (current_step, command.command) {
                 (Step::WaitingPairingRequest, Command::PairingRequest) => {
-                    Self::handle_pairing_request(command.payload, ops, pairing_data)?;
+                    Self::handle_pairing_request(command.payload, ops, pairing_data, event_handler.io_capabilities())?;
                     Self::send_pairing_response(ops, pairing_data)?;
                     Step::WaitingPublicKey
                 }
@@ -174,7 +176,7 @@ impl Pairing {
                 (Step::WaitingNumericComparisonRandom(_), Command::PairingRandom) => {
                     Self::handle_numeric_compare_random(command.payload, pairing_data)?;
                     Self::send_nonce(ops, &pairing_data.local_nonce)?;
-                    Self::numeric_compare_confirm(pairing_data)?;
+                    Self::numeric_compare_confirm(event_handler, pairing_data)?;
                     // TODO potentially wait for user confirmation
                     Step::WaitingDHKeyEa
                 }
@@ -201,6 +203,7 @@ impl Pairing {
         payload: &[u8],
         ops: &mut OPS,
         pairing_data: &mut PairingData,
+        local_io: IoCapabilities,
     ) -> Result<(), Error> {
         let peer_features = PairingFeatures::decode(payload).map_err(|_| Error::Security(Reason::InvalidParameters))?;
         if peer_features.maximum_encryption_key_size < ENCRYPTION_KEY_SIZE_128_BITS {
@@ -210,7 +213,7 @@ impl Pairing {
             return Err(Error::Security(Reason::UnspecifiedReason));
         }
         let local_features = PairingFeatures {
-            io_capabilities: IoCapabilities::NoInputNoOutput,
+            io_capabilities: local_io,
             security_properties: AuthReq::new(BondingFlag::NoBonding),
             ..Default::default()
         };
@@ -367,13 +370,13 @@ impl Pairing {
         ops.try_send_packet(check)
     }
 
-    fn numeric_compare_confirm(pairing_data: &PairingData) -> Result<(), Error> {
+    fn numeric_compare_confirm(event_handler: &dyn EventHandler, pairing_data: &PairingData) -> Result<(), Error> {
         let peer_public_key = pairing_data.peer_public_key.ok_or(Error::InvalidValue)?;
         let local_public_key = pairing_data.local_public_key.ok_or(Error::InvalidValue)?;
         let vb = pairing_data.peer_nonce.g2(peer_public_key.x(), local_public_key.x(), &pairing_data.local_nonce);
 
-        info!("** Display and compare numeric value {}", vb.0);
-        // TODO Display and maybe defer until confirmation
+        // TODO the display numeric should not always be displayed!
+        event_handler.on_display_security_numeric(vb.0);
         Ok(())
     }
 }
@@ -450,6 +453,15 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct EventHandler {
+
+    }
+
+    impl crate::host::EventHandler for EventHandler {
+
+    }
+
     #[test]
     fn happy_path() {
         let mut pairing_ops = TestOps::default();
@@ -459,6 +471,7 @@ mod tests {
             Address::random([7, 8, 9, 10, 11, 12]),
             &pairing_data,
         );*/
+        let event_handler = EventHandler::default();
         let pairing = Pairing::new(Address::random([1, 2, 3, 4, 5, 6]),
                                    Address::random([7, 8, 9, 10, 11, 12]), SecurityLevel::EncryptedNoAuth);
         let mut rng = ChaCha12Core::seed_from_u64(1).into();
@@ -469,6 +482,7 @@ mod tests {
                 &[0x03, 0, 0x08, 16, 0, 0],
                 &mut pairing_ops,
                 &mut rng,
+                &event_handler
             )
             .unwrap();
         {
@@ -505,6 +519,7 @@ mod tests {
                 packet.payload(),
                 &mut pairing_ops,
                 &mut rng,
+                &event_handler
             )
             .unwrap();
 
@@ -548,6 +563,7 @@ mod tests {
                 &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
                 &mut pairing_ops,
                 &mut rng,
+                &event_handler
             )
             .unwrap();
 
@@ -572,6 +588,7 @@ mod tests {
                 ],
                 &mut pairing_ops,
                 &mut rng,
+                &event_handler
             )
             .unwrap();
 

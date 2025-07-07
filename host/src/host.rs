@@ -43,7 +43,7 @@ use crate::connection_manager::{ConnectionManager, ConnectionStorage, PacketGran
 use crate::cursor::WriteCursor;
 use crate::pdu::Pdu;
 #[cfg(feature = "security")]
-use crate::security_manager::{SecurityEventData};
+use crate::security_manager::{SecurityEventData, IoCapabilities};
 use crate::types::l2cap::{
     L2capHeader, L2capSignal, L2capSignalHeader, L2CAP_CID_ATT, L2CAP_CID_DYN_START, L2CAP_CID_LE_U_SECURITY_MANAGER,
     L2CAP_CID_LE_U_SIGNAL,
@@ -281,7 +281,7 @@ where
         true
     }
 
-    fn handle_acl(&self, acl: AclPacket<'_>) -> Result<(), Error> {
+    fn handle_acl(&self, acl: AclPacket<'_>, event_handler: &dyn EventHandler) -> Result<(), Error> {
         self.connections.received(acl.handle())?;
         let handle = acl.handle();
         let (header, pdu) = match acl.boundary_flag() {
@@ -473,7 +473,7 @@ where
                 panic!("le signalling channel was fragmented, impossible!");
             }
             L2CAP_CID_LE_U_SECURITY_MANAGER => {
-                self.connections.handle_security_channel(acl.handle(), pdu)?;
+                self.connections.handle_security_channel(acl.handle(), pdu, event_handler)?;
             }
             other if other >= L2CAP_CID_DYN_START => match self.channels.dispatch(header.channel, pdu) {
                 Ok(_) => {}
@@ -627,6 +627,18 @@ pub trait EventHandler {
     /// Handle extended advertising reports
     #[cfg(feature = "scan")]
     fn on_ext_adv_reports(&self, reports: bt_hci::param::LeExtAdvReportsIter) {}
+
+    /// Get the IO capabilities of this device.
+    #[cfg(feature = "security")]
+    fn io_capabilities(&self) -> IoCapabilities {
+        IoCapabilities::NoInputNoOutput
+    }
+
+    /// The device is requested to display a numeric value for pairing
+    #[cfg(feature = "security")]
+    fn on_display_security_numeric(&self, value: u32) {
+        info!("** Display security {}", value)
+    }
 }
 
 struct DummyHandler;
@@ -751,7 +763,7 @@ impl<'d, C: Controller, P: PacketPool> RxRunner<'d, C, P> {
             // last = Instant::now();
             //        trace!("[host] polling took {} ms", (polled - started).as_millis());
             match result {
-                Ok(ControllerToHostPacket::Acl(acl)) => match host.handle_acl(acl) {
+                Ok(ControllerToHostPacket::Acl(acl)) => match host.handle_acl(acl, event_handler) {
                     Ok(_) => {}
                     Err(e) => {
                         warn!(

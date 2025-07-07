@@ -6,6 +6,7 @@ mod constants;
 mod crypto;
 mod pairing;
 mod types;
+pub use types::IoCapabilities;
 
 use core::cell::RefCell;
 use core::future::{poll_fn, Future};
@@ -32,6 +33,7 @@ use crate::security_manager::pairing::pairings_ops_from_fn;
 use crate::security_manager::pairing::peripheral::Pairing;
 use crate::types::l2cap::L2CAP_CID_LE_U_SECURITY_MANAGER;
 use crate::{Address, Error, Identity, PacketPool};
+use crate::host::EventHandler;
 use crate::security_manager::types::{AuthReq, BondingFlag};
 
 /// Events of interest to the security manager
@@ -305,6 +307,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         pdu: Pdu<P::Packet>,
         connections: &ConnectionManager<'_, P>,
         storage: &ConnectionStorage<P::Packet>,
+        event_handler: &dyn EventHandler,
     ) -> Result<(), Error> {
         let handle = storage.handle.ok_or(Error::InvalidValue)?;
         let peer_address_kind = storage.peer_addr_kind.ok_or(Error::InvalidValue)?;
@@ -375,7 +378,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         let mut rng_borrow = self.rng.borrow_mut();
         sm.as_ref()
             .unwrap()
-            .handle_l2cap_command(command, payload, &mut ops, rng_borrow.deref_mut())
+            .handle_l2cap_command(command, payload, &mut ops, rng_borrow.deref_mut(), event_handler)
     }
 
     /// Handle packet
@@ -384,11 +387,12 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         pdu: Pdu<P::Packet>,
         connections: &ConnectionManager<'_, P>,
         storage: &ConnectionStorage<P::Packet>,
+        event_handler: &dyn EventHandler
     ) -> Result<(), Error> {
         let role = storage.role.ok_or(Error::InvalidValue)?;
 
         let result = if role == LeConnRole::Peripheral {
-            self.handle_peripheral(pdu, connections, storage)
+            self.handle_peripheral(pdu, connections, storage, event_handler)
         } else {
             todo!()
         };

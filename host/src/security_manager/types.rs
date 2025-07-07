@@ -283,7 +283,7 @@ impl defmt::Format for Command {
 /// Device I/O capabilities
 // ([Vol 3] Part H, Section 2.3.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum IoCapabilities {
+pub enum IoCapabilities {
     /// Display only
     DisplayOnly,
     /// Yes/no display
