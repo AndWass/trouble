@@ -1,26 +1,31 @@
 use crate::codec::{Decode, Encode};
-use crate::security_manager::constants::ENCRYPTION_KEY_SIZE_128_BITS;
-use crate::security_manager::crypto::{Confirm, DHKey, MacKey, Nonce, PublicKey, SecretKey};
-use crate::security_manager::pairing::util::{choose_pairing_method, make_dhkey_check_packet, make_pairing_random, make_public_key_packet, prepare_packet, CommandAndPayload, PairingMethod};
-use crate::security_manager::pairing::{Event, PairingOps};
-use crate::security_manager::types::{Command, ConfirmValue, IoCapabilities, PairingFeatures};
-use crate::security_manager::{Reason};
-use crate::{Address, Error, LongTermKey, PacketPool};
-use core::cell::RefCell;
-use core::ops::{DerefMut};
-use rand_chacha::ChaCha12Rng;
-use rand_core::RngCore;
 use crate::connection::SecurityLevel;
 use crate::host::EventHandler;
+use crate::security_manager::constants::ENCRYPTION_KEY_SIZE_128_BITS;
+use crate::security_manager::crypto::{Confirm, DHKey, MacKey, Nonce, PublicKey, SecretKey};
+use crate::security_manager::pairing::util::{choose_pairing_method, make_confirm_packet, make_dhkey_check_packet, make_pairing_random, make_public_key_packet, prepare_packet, CommandAndPayload, PairingMethod, PassKeyEntryAction};
+use crate::security_manager::pairing::{Event, PairingOps};
+use crate::security_manager::types::{Command, ConfirmValue, IoCapabilities, PairingFeatures};
+use crate::security_manager::Reason;
+use crate::{Address, Error, LongTermKey, PacketPool};
+use core::cell::RefCell;
+use core::ops::DerefMut;
+use rand_chacha::ChaCha12Rng;
+use rand_core::RngCore;
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 enum Step {
     WaitingPairingRequest,
     WaitingPublicKey,
     // Numeric comparison
     WaitingNumericComparisonRandom(NumericCompareConfirmSentTag),
     WaitingNumericComparisonResult(Option<[u8; size_of::<u128>()]>),
-    // TODO add pass key entry and OOB
+    // Pass key entry
+    WaitingPassKeyInjected,
+    WaitingPassKeyEntryConfirm(i32),
+    WaitingPassKeyEntryRandom(i32),
+    // TODO add OOB
     WaitingDHKeyEa,
     WaitingLinkEncrypted,
     Success,
@@ -28,6 +33,7 @@ enum Step {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct NumericCompareConfirmSentTag {}
 
 impl NumericCompareConfirmSentTag {
@@ -38,9 +44,7 @@ impl NumericCompareConfirmSentTag {
     ) -> Result<Self, Error> {
         pairing_data.local_nonce = Nonce::new(rng);
         pairing_data.confirm = Self::compute_confirm(pairing_data)?;
-        let mut packet = prepare_packet::<P>(Command::PairingConfirm)?;
-        let response = packet.payload_mut();
-        response.copy_from_slice(&pairing_data.confirm.0.to_le_bytes());
+        let packet = make_confirm_packet(&pairing_data.confirm)?;
         match ops.try_send_packet(packet) {
             Ok(_) => (),
             Err(error) => {
@@ -90,7 +94,9 @@ impl Pairing {
     }
     pub fn new(local_address: Address, peer_address: Address, requested_level: SecurityLevel) -> Self {
         let mut local_features = PairingFeatures::default();
-        local_features.security_properties.set_man_in_the_middle(requested_level.authenticated());
+        local_features
+            .security_properties
+            .set_man_in_the_middle(requested_level.authenticated());
         Self {
             current_step: RefCell::new(Step::WaitingPairingRequest),
             pairing_data: RefCell::new(PairingData {
@@ -109,22 +115,25 @@ impl Pairing {
                 local_nonce: Nonce(0),
                 peer_nonce: Nonce(0),
                 mac_key: None,
-                long_term_key: LongTermKey(0)
-            })
+                long_term_key: LongTermKey(0),
+            }),
         }
     }
 
-    pub fn handle_l2cap_command<P: PacketPool, OPS: PairingOps<P>>(&self, command: Command, payload: &[u8], ops: &mut OPS, rng: &mut ChaCha12Rng, event_handler: &dyn EventHandler) -> Result<(), Error> {
-        match self.handle_impl(CommandAndPayload {
-            payload,
-            command
-        }, ops, rng, event_handler)
-        {
+    pub fn handle_l2cap_command<P: PacketPool, OPS: PairingOps<P>>(
+        &self,
+        command: Command,
+        payload: &[u8],
+        ops: &mut OPS,
+        rng: &mut ChaCha12Rng,
+        event_handler: &dyn EventHandler,
+    ) -> Result<(), Error> {
+        match self.handle_impl(CommandAndPayload { payload, command }, ops, rng, event_handler) {
             Ok(()) => Ok(()),
             Err(error) => {
                 self.current_step.replace(Step::Error(error.clone()));
                 Err(error)
-            },
+            }
         }
     }
 
@@ -132,20 +141,19 @@ impl Pairing {
         let current_state = self.current_step.borrow().clone();
         let next_state = match (current_state, event) {
             (Step::WaitingLinkEncrypted, Event::LinkEncrypted) => {
+                info!("Link encrypted!");
                 // TODO send key data
                 Step::Success
-            },
+            }
             (Step::WaitingNumericComparisonResult(ea), Event::NumericComparisonConfirm(c)) => {
                 if c.is_confirmed() {
                     if let Some(ea) = ea {
                         let mut pairing_data = self.pairing_data.borrow_mut();
                         Self::handle_dhkey_ea(&ea, ops, pairing_data.deref_mut())?
-                    }
-                    else {
+                    } else {
                         Step::WaitingDHKeyEa
                     }
-                }
-                else {
+                } else {
                     Step::Error(Error::Security(Reason::NumericComparisonFailed))
                 }
             }
@@ -156,7 +164,7 @@ impl Pairing {
             Step::Error(x) => {
                 self.current_step.replace(Step::Error(x.clone()));
                 Err(x)
-            },
+            }
             x => {
                 self.current_step.replace(x);
                 Ok(())
@@ -175,6 +183,7 @@ impl Pairing {
         let mut pairing_data = self.pairing_data.borrow_mut();
         let pairing_data = pairing_data.deref_mut();
         let next_step = {
+            info!("Handling {:?}, step {:?}", command.command, current_step);
             match (current_step, command.command) {
                 (Step::WaitingPairingRequest, Command::PairingRequest) => {
                     Self::handle_pairing_request(command.payload, ops, pairing_data, event_handler.io_capabilities())?;
@@ -185,12 +194,20 @@ impl Pairing {
                     Self::handle_public_key(command.payload, pairing_data);
                     Self::generate_private_public_key_pair(pairing_data, rng)?;
                     Self::send_public_key(ops, pairing_data.local_public_key.as_ref().unwrap())?;
-                    if pairing_data.pairing_method == PairingMethod::JustWorks ||
-                        pairing_data.pairing_method == PairingMethod::NumericComparison {
-                        Step::WaitingNumericComparisonRandom(NumericCompareConfirmSentTag::new(ops, pairing_data, rng)?)
-                    }
-                    else {
-                        todo!("Pass key entry and OOB needs to be implemented")
+                    match pairing_data.pairing_method {
+                        PairingMethod::OutOfBand => todo!("OOB not implemented"),
+                        PairingMethod::PassKeyEntry {peripheral, ..} => {
+                            if peripheral == PassKeyEntryAction::Display {
+                                pairing_data.local_secret_rb = 1234;
+                                pairing_data.peer_secret_ra = 1234;
+                                event_handler.on_display_security_numeric(pairing_data.local_secret_rb as u32);
+                                Step::WaitingPassKeyEntryConfirm(0)
+                            }
+                            else {
+                                todo!("Pass key entry input not supported")
+                            }
+                        },
+                        _ => Step::WaitingNumericComparisonRandom(NumericCompareConfirmSentTag::new(ops, pairing_data, rng)?)
                     }
                 }
                 (Step::WaitingNumericComparisonRandom(_), Command::PairingRandom) => {
@@ -202,8 +219,24 @@ impl Pairing {
                     let ea: [u8; size_of::<u128>()] = command.payload.try_into().map_err(|_| Error::InvalidValue)?;
                     Step::WaitingNumericComparisonResult(Some(ea))
                 }
+
+                (Step::WaitingPassKeyInjected, Command::PairingConfirm) => {
+                    todo!()
+                }
+                (Step::WaitingPassKeyEntryConfirm(round), Command::PairingConfirm) => {
+                    Self::handle_pass_key_confirm(round, command.payload, ops, pairing_data, rng)?
+                }
+
+                (Step::WaitingPassKeyEntryRandom(round), Command::PairingRandom) => {
+                    Self::handle_pass_key_random(round, command.payload, ops, pairing_data)?
+                }
+
                 (Step::WaitingDHKeyEa, Command::PairingDhKeyCheck) => {
                     Self::handle_dhkey_ea(command.payload, ops, pairing_data)?
+                },
+
+                (x, Command::KeypressNotification) => {
+                    x
                 }
 
                 _ => return Err(Error::InvalidState),
@@ -342,7 +375,11 @@ impl Pairing {
         Ok(())
     }
 
-    fn handle_dhkey_ea<P: PacketPool, OPS: PairingOps<P>>(payload: &[u8], ops: &mut OPS, pairing_data: &mut PairingData) -> Result<Step, Error> {
+    fn handle_dhkey_ea<P: PacketPool, OPS: PairingOps<P>>(
+        payload: &[u8],
+        ops: &mut OPS,
+        pairing_data: &mut PairingData,
+    ) -> Result<Step, Error> {
         Self::compute_ltk(pairing_data)?;
         let expected_payload = pairing_data
             .mac_key
@@ -388,18 +425,73 @@ impl Pairing {
     fn numeric_compare_confirm(event_handler: &dyn EventHandler, pairing_data: &PairingData) -> Result<Step, Error> {
         let peer_public_key = pairing_data.peer_public_key.ok_or(Error::InvalidValue)?;
         let local_public_key = pairing_data.local_public_key.ok_or(Error::InvalidValue)?;
-        let vb = pairing_data.peer_nonce.g2(peer_public_key.x(), local_public_key.x(), &pairing_data.local_nonce);
+        let vb = pairing_data
+            .peer_nonce
+            .g2(peer_public_key.x(), local_public_key.x(), &pairing_data.local_nonce);
 
         if pairing_data.pairing_method == PairingMethod::JustWorks {
             info!("[smp] Just works pairing with compare {}", vb.0);
             Ok(Step::WaitingDHKeyEa)
-        }
-        else {
+        } else {
             info!("[smp] Numeric comparison pairing with compare {}", vb.0);
             match event_handler.on_display_confirm_security_numeric(ConfirmValue::new(vb.0)) {
                 Some(false) => Err(Error::Security(Reason::NumericComparisonFailed)),
                 Some(true) => Ok(Step::WaitingDHKeyEa),
-                None => Ok(Step::WaitingNumericComparisonResult(None))
+                None => Ok(Step::WaitingNumericComparisonResult(None)),
+            }
+        }
+    }
+
+    fn handle_pass_key_confirm<P: PacketPool, OPS: PairingOps<P>>(
+        round: i32,
+        payload: &[u8],
+        ops: &mut OPS,
+        pairing_data: &mut PairingData,
+        rng: &mut ChaCha12Rng,
+    ) -> Result<Step, Error> {
+        pairing_data.confirm = Confirm(u128::from_le_bytes(
+            payload
+                .try_into()
+                .map_err(|_| Error::Security(Reason::InvalidParameters))?,
+        ));
+        pairing_data.local_nonce = Nonce::new(rng);
+        let z = 0x80 | ((pairing_data.local_secret_rb & (1 << round)) >> round);
+        let confirm_to_send = pairing_data.local_nonce.f4(
+            pairing_data.local_public_key.ok_or(Error::InvalidValue)?.x(),
+            pairing_data.peer_public_key.ok_or(Error::InvalidValue)?.x(),
+            z as u8,
+        );
+        let packet = make_confirm_packet(&confirm_to_send)?;
+        ops.try_send_packet(packet)?;
+        Ok(Step::WaitingPassKeyEntryRandom(round))
+    }
+
+    fn handle_pass_key_random<P: PacketPool, OPS: PairingOps<P>>(round: i32, payload: &[u8], ops: &mut OPS, pairing_data: &mut PairingData) -> Result<Step, Error> {
+        pairing_data.peer_nonce = Nonce(u128::from_le_bytes(
+            payload
+                .try_into()
+                .map_err(|_| Error::Security(Reason::InvalidParameters))?,
+        ));
+        let round = round as u128;
+        let z = 0x80 | ((pairing_data.local_secret_rb & (1 << round)) >> round);
+        let expected_confirm = pairing_data.peer_nonce.f4(
+            pairing_data.peer_public_key.ok_or(Error::InvalidValue)?.x(),
+            pairing_data.local_public_key.ok_or(Error::InvalidValue)?.x(),
+            z as u8,
+        );
+
+        if pairing_data.confirm != expected_confirm {
+            error!("Confirm and computed confirm mismatch: {:?} != {:?}", pairing_data.confirm.0, expected_confirm.0);
+            Err(Error::Security(Reason::PasskeyEntryFailed))
+        }
+        else {
+            let nonce_packet = make_pairing_random(&pairing_data.local_nonce)?;
+            ops.try_send_packet(nonce_packet)?;
+            if round == 19 {
+                Ok(Step::WaitingDHKeyEa)
+            }
+            else {
+                Ok(Step::WaitingPassKeyEntryConfirm((round + 1) as i32))
             }
         }
     }
@@ -408,17 +500,17 @@ impl Pairing {
 #[cfg(test)]
 mod tests {
     extern crate alloc;
+    use crate::prelude::SecurityLevel;
     use crate::security_manager::crypto::{Nonce, PublicKey, SecretKey};
-    use crate::security_manager::pairing::peripheral::{Pairing};
+    use crate::security_manager::pairing::peripheral::Pairing;
     use crate::security_manager::pairing::util::make_public_key_packet;
     use crate::security_manager::pairing::PairingOps;
     use crate::security_manager::types::{Command, IoCapabilities, PairingFeatures};
-    use crate::security_manager::{TxPacket};
+    use crate::security_manager::TxPacket;
     use crate::{Address, Error, LongTermKey, Packet, PacketPool};
     use bt_hci::param::ConnHandle;
     use rand_chacha::ChaCha12Core;
     use rand_core::SeedableRng;
-    use crate::prelude::SecurityLevel;
 
     #[derive(Debug)]
     struct TestPacket(heapless::Vec<u8, 128>);
@@ -478,13 +570,9 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct EventHandler {
+    struct EventHandler {}
 
-    }
-
-    impl crate::host::EventHandler for EventHandler {
-
-    }
+    impl crate::host::EventHandler for EventHandler {}
 
     #[test]
     fn happy_path() {
@@ -496,8 +584,11 @@ mod tests {
             &pairing_data,
         );*/
         let event_handler = EventHandler::default();
-        let pairing = Pairing::new(Address::random([1, 2, 3, 4, 5, 6]),
-                                   Address::random([7, 8, 9, 10, 11, 12]), SecurityLevel::EncryptedNoAuth);
+        let pairing = Pairing::new(
+            Address::random([1, 2, 3, 4, 5, 6]),
+            Address::random([7, 8, 9, 10, 11, 12]),
+            SecurityLevel::EncryptedNoAuth,
+        );
         let mut rng = ChaCha12Core::seed_from_u64(1).into();
         // Central sends pairing request, expects pairing response from peripheral
         pairing
@@ -506,7 +597,7 @@ mod tests {
                 &[0x03, 0, 0x08, 16, 0, 0],
                 &mut pairing_ops,
                 &mut rng,
-                &event_handler
+                &event_handler,
             )
             .unwrap();
         {
@@ -543,7 +634,7 @@ mod tests {
                 packet.payload(),
                 &mut pairing_ops,
                 &mut rng,
-                &event_handler
+                &event_handler,
             )
             .unwrap();
 
@@ -587,7 +678,7 @@ mod tests {
                 &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
                 &mut pairing_ops,
                 &mut rng,
-                &event_handler
+                &event_handler,
             )
             .unwrap();
 
@@ -612,7 +703,7 @@ mod tests {
                 ],
                 &mut pairing_ops,
                 &mut rng,
-                &event_handler
+                &event_handler,
             )
             .unwrap();
 

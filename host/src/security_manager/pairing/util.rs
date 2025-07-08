@@ -1,5 +1,5 @@
 use crate::pdu::Pdu;
-use crate::security_manager::crypto::{Check, DHKey, MacKey, Nonce, PublicKey};
+use crate::security_manager::crypto::{Check, Confirm, DHKey, MacKey, Nonce, PublicKey};
 use crate::security_manager::types::{Command, PairingFeatures, UseOutOfBand};
 use crate::security_manager::{IoCapabilities, Reason, TxPacket};
 use crate::{Address, Error, LongTermKey, PacketPool};
@@ -18,13 +18,12 @@ impl defmt::Format for PassKeyEntryAction {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PairingMethod
-{
+pub enum PairingMethod {
     JustWorks,
     NumericComparison,
     PassKeyEntry {
         central: PassKeyEntryAction,
-        peripheral: PassKeyEntryAction
+        peripheral: PassKeyEntryAction,
     },
     OutOfBand,
 }
@@ -39,47 +38,41 @@ impl defmt::Format for PairingMethod {
 pub fn choose_pairing_method(central: PairingFeatures, peripheral: PairingFeatures) -> PairingMethod {
     if !central.security_properties.man_in_the_middle() && !peripheral.security_properties.man_in_the_middle() {
         PairingMethod::JustWorks
-    }
-    else if matches!(central.use_oob, UseOutOfBand::Present) || matches!(peripheral.use_oob, UseOutOfBand::Present) {
+    } else if matches!(central.use_oob, UseOutOfBand::Present) || matches!(peripheral.use_oob, UseOutOfBand::Present) {
         PairingMethod::OutOfBand
-    }
-    else {
+    } else {
         if peripheral.io_capabilities == IoCapabilities::DisplayOnly {
             match central.io_capabilities {
                 IoCapabilities::KeyboardOnly | IoCapabilities::KeyboardDisplay => PairingMethod::PassKeyEntry {
                     central: PassKeyEntryAction::Input,
-                    peripheral: PassKeyEntryAction::Display
+                    peripheral: PassKeyEntryAction::Display,
                 },
-                _ => PairingMethod::JustWorks
+                _ => PairingMethod::JustWorks,
             }
-        }
-        else if peripheral.io_capabilities == IoCapabilities::DisplayYesNo {
+        } else if peripheral.io_capabilities == IoCapabilities::DisplayYesNo {
             match central.io_capabilities {
                 IoCapabilities::DisplayYesNo | IoCapabilities::KeyboardDisplay => PairingMethod::NumericComparison,
                 IoCapabilities::KeyboardOnly => PairingMethod::PassKeyEntry {
                     central: PassKeyEntryAction::Input,
-                    peripheral: PassKeyEntryAction::Display
+                    peripheral: PassKeyEntryAction::Display,
                 },
-                _ => PairingMethod::JustWorks
+                _ => PairingMethod::JustWorks,
             }
-        }
-        else if peripheral.io_capabilities == IoCapabilities::KeyboardOnly {
+        } else if peripheral.io_capabilities == IoCapabilities::KeyboardOnly {
             match central.io_capabilities {
                 IoCapabilities::NoInputNoOutput => PairingMethod::JustWorks,
                 IoCapabilities::KeyboardOnly => PairingMethod::PassKeyEntry {
                     central: PassKeyEntryAction::Input,
-                    peripheral: PassKeyEntryAction::Input
+                    peripheral: PassKeyEntryAction::Input,
                 },
                 _ => PairingMethod::PassKeyEntry {
                     central: PassKeyEntryAction::Display,
-                    peripheral: PassKeyEntryAction::Input
+                    peripheral: PassKeyEntryAction::Input,
                 },
             }
-        }
-        else if peripheral.io_capabilities == IoCapabilities::NoInputNoOutput {
+        } else if peripheral.io_capabilities == IoCapabilities::NoInputNoOutput {
             PairingMethod::JustWorks
-        }
-        else {
+        } else {
             // Local io == keyboard display
             match central.io_capabilities {
                 IoCapabilities::DisplayOnly => PairingMethod::PassKeyEntry {
@@ -143,6 +136,13 @@ pub fn make_mac_and_ltk(
     dh_key.f5(*central_nonce, *peripheral_nonce, central_address, peripheral_address)
 }
 
+pub fn make_confirm_packet<P: PacketPool>(confirm: &Confirm) -> Result<TxPacket<P>, Error> {
+    let mut packet = prepare_packet::<P>(Command::PairingConfirm)?;
+    let response = packet.payload_mut();
+    response.copy_from_slice(&confirm.0.to_le_bytes());
+    Ok(packet)
+}
+
 #[derive(Debug, Clone)]
 pub struct CommandAndPayload<'a> {
     pub command: Command,
@@ -180,15 +180,23 @@ impl<'a> CommandAndPayload<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::security_manager::types::{AuthReq, BondingFlag};
     use super::*;
+    use crate::security_manager::types::{AuthReq, BondingFlag};
 
     #[test]
     fn oob_used() {
         for p_oob in 0..1 {
             for c_oob in 0..1 {
-                let p_oob = if p_oob == 1 { UseOutOfBand::Present } else { UseOutOfBand::NotPresent };
-                let c_oob = if c_oob == 1 { UseOutOfBand::Present } else { UseOutOfBand::NotPresent };
+                let p_oob = if p_oob == 1 {
+                    UseOutOfBand::Present
+                } else {
+                    UseOutOfBand::NotPresent
+                };
+                let c_oob = if c_oob == 1 {
+                    UseOutOfBand::Present
+                } else {
+                    UseOutOfBand::NotPresent
+                };
                 for p in 0u8..5 {
                     for c in 0u8..5 {
                         let peripheral = PairingFeatures {
@@ -197,15 +205,14 @@ mod tests {
                             security_properties: AuthReq::new(BondingFlag::NoBonding),
                             initiator_key_distribution: 0.into(),
                             responder_key_distribution: 0.into(),
-                            maximum_encryption_key_size: 16
+                            maximum_encryption_key_size: 16,
                         };
                         let mut central = peripheral.clone();
                         central.use_oob = c_oob;
                         central.io_capabilities = c.try_into().unwrap();
                         if p_oob == UseOutOfBand::NotPresent && c_oob == UseOutOfBand::NotPresent {
                             assert_ne!(choose_pairing_method(central, peripheral), PairingMethod::OutOfBand);
-                        }
-                        else {
+                        } else {
                             assert_eq!(choose_pairing_method(central, peripheral), PairingMethod::OutOfBand);
                         }
                     }
@@ -224,7 +231,7 @@ mod tests {
                     security_properties: AuthReq::new(BondingFlag::NoBonding),
                     initiator_key_distribution: 0.into(),
                     responder_key_distribution: 0.into(),
-                    maximum_encryption_key_size: 16
+                    maximum_encryption_key_size: 16,
                 };
                 let mut central = peripheral.clone();
                 central.io_capabilities = c.try_into().unwrap();

@@ -520,7 +520,8 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 return Ok(());
             }
             self.state.borrow_mut().connections[index as usize].requested_security_level = level;
-            self.security_manager.initiate(self, &self.state.borrow().connections[index as usize])
+            //self.security_manager.initiate(self, &self.state.borrow().connections[index as usize])
+            Ok(())
         }
     }
 
