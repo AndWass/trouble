@@ -18,8 +18,7 @@ impl trouble_host::prelude::EventHandler for EventHandler {
     }
 
     fn io_capabilities(&self) -> trouble_host::IoCapabilities {
-        //trouble_host::IoCapabilities::DisplayOnly
-        trouble_host::IoCapabilities::NoInputNoOutput
+        trouble_host::IoCapabilities::DisplayOnly
     }
 }
 
@@ -136,8 +135,8 @@ async fn gatt_events_task(server: &Server<'_>, conn: &GattConnection<'_, '_, Def
                         if conn.raw().security_level().encrypted() {
                             None
                         } else {
-                            let _ = conn.raw().request_security_level(SecurityLevel::EncryptedNoAuth);
-                            Some(AttErrorCode::INSUFFICIENT_ENCRYPTION)
+                            let _ = conn.raw().request_security_level(SecurityLevel::EncryptedAuthenticated);
+                            Some(AttErrorCode::INSUFFICIENT_AUTHENTICATION)
                         }
                         #[cfg(not(feature = "security"))]
                         None
@@ -150,8 +149,8 @@ async fn gatt_events_task(server: &Server<'_>, conn: &GattConnection<'_, '_, Def
                         if conn.raw().security_level().encrypted() {
                             None
                         } else {
-                            let _ = conn.raw().request_security_level(SecurityLevel::EncryptedNoAuth);
-                            Some(AttErrorCode::INSUFFICIENT_ENCRYPTION)
+                            let _ = conn.raw().request_security_level(SecurityLevel::EncryptedAuthenticated);
+                            Some(AttErrorCode::INSUFFICIENT_AUTHENTICATION)
                         }
                         #[cfg(not(feature = "security"))]
                         None

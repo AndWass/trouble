@@ -557,17 +557,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
     pub(crate) fn handle_security_hci_event(&self, event: bt_hci::event::Event) -> Result<(), Error> {
         #[cfg(feature = "security")]
         {
-
-            if let bt_hci::event::Event::EncryptionChangeV1(event_data) = event {
-                self.with_connected_handle(event_data.handle, |storage| {
-                    if let Err(error) = self.security_manager.handle_hci_event(&event, self, storage) {
-                        error!("Failed to handle security manager packet, {:?}", error);
-                        return Err(error);
-                    }
-                    storage.security_level = self.security_manager.get_security_level::<P>(storage);
-                    Ok(())
-                })?;
-            }
+            self.security_manager.handle_hci_event(event, self)?;
         }
         Ok(())
     }

@@ -55,6 +55,7 @@ pub struct BondInformation {
     pub ltk: LongTermKey,
     /// Peer identity
     pub identity: Identity,
+    pub security_level: SecurityLevel,
     // Connection Signature Resolving Key (CSRK)?
 }
 
@@ -488,15 +489,14 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         &self,
         storage: &ConnectionStorage<<P as PacketPool>::Packet>,
     ) -> SecurityLevel {
-        SecurityLevel::NoEncryptionNoAuth
+
     }
 
     /// Handle recevied events from HCI
     pub(crate) fn handle_hci_event<P: PacketPool>(
         &self,
-        event: &Event,
+        event: Event,
         connections: &ConnectionManager<'_, P>,
-        storage: &ConnectionStorage<<P as PacketPool>::Packet>,
     ) -> Result<(), Error> {
         match event {
             Event::EncryptionChangeV1(event_data) => match event_data.status.to_result() {
@@ -505,20 +505,23 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                         "[security manager] Handle Encryption Changed event {}",
                         event_data.enabled
                     );
-                    if event_data.enabled {
-                        let sm = self.peripheral_pairing_sm.borrow();
-                        if let Some(sm) = &*sm {
-                            let mut ops = PairingOpsImpl {
-                                peer_identity: storage.peer_identity.ok_or(Error::InvalidValue)?,
-                                security_manager: self,
-                                conn_handle: storage.handle.ok_or(Error::InvalidValue)?,
-                                connections,
-                            };
-                            let res = sm.handle_event(pairing::Event::LinkEncrypted, &mut ops);
-                            let _ = self.handle_security_error(connections, storage, &res);
-                            res?;
+                    connections.with_connected_handle(event_data.handle, |storage| {
+                        if event_data.enabled {
+                            let sm = self.peripheral_pairing_sm.borrow();
+                            if let Some(sm) = &*sm {
+                                let res = sm.handle_event(pairing::Event::LinkEncrypted, &mut PairingOpsImpl {
+                                    security_manager: self,
+                                    peer_identity: storage.peer_identity.ok_or(Error::InvalidValue)?,
+                                    connections,
+                                    conn_handle: storage.handle.ok_or(Error::InvalidValue)?
+                                });
+                                let _ = self.handle_security_error(connections, storage, &res);
+                                res?;
+                            }
                         }
-                    }
+                        storage.security_level = self.get_security_level::<P>(storage);
+                        Ok(())
+                    })?;
                 }
                 Err(error) => {
                     error!("[security manager] Encryption Changed Handle Error {}", error);
