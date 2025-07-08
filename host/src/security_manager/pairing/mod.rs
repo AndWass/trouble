@@ -1,6 +1,6 @@
 use bt_hci::param::ConnHandle;
 use crate::{Error, LongTermKey, PacketPool};
-use crate::security_manager::{TxPacket};
+use crate::security_manager::{ConfirmValue, TxPacket};
 
 pub mod peripheral;
 // pub mod central;
@@ -48,4 +48,5 @@ where
 
 pub enum Event {
     LinkEncrypted,
+    NumericComparisonConfirm(ConfirmValue),
 }

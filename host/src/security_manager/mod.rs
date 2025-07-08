@@ -29,7 +29,7 @@ pub use types::Reason;
 use crate::connection::SecurityLevel;
 use crate::connection_manager::{ConnectionManager, ConnectionStorage};
 use crate::pdu::Pdu;
-use crate::security_manager::pairing::pairings_ops_from_fn;
+use crate::security_manager::pairing::{PairingOps};
 use crate::security_manager::pairing::peripheral::Pairing;
 use crate::types::l2cap::L2CAP_CID_LE_U_SECURITY_MANAGER;
 use crate::{Address, Error, Identity, PacketPool};
@@ -361,20 +361,12 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
 
         info!("Pairing step with new state machine!");
         let sm = { self.peripheral_pairing_sm.borrow() };
-        let mut ops = pairings_ops_from_fn(
-            handle,
-            |tx| self.try_send_packet(tx, connections, handle),
-            |ltk: &LongTermKey| {
-                info!("Enabling encryption for {}", peer_identity);
-                //let bond_info = self.store_pairing()?;
-                let bond_info = BondInformation {
-                    ltk: ltk.clone(),
-                    identity: peer_identity.clone(),
-                };
-                self.add_bond_information(bond_info.clone())?;
-                self.try_send_event(SecurityEventData::EnableEncryption(handle, bond_info))
-            },
-        );
+        let mut ops = PairingOpsImpl {
+            security_manager: self,
+            conn_handle: handle,
+            connections,
+            peer_identity
+        };
         let mut rng_borrow = self.rng.borrow_mut();
         sm.as_ref()
             .unwrap()
@@ -385,7 +377,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     pub(crate) fn handle_l2cap_command<P: PacketPool>(
         &self,
         pdu: Pdu<P::Packet>,
-        connections: &ConnectionManager<'_, P>,
+        connections: &ConnectionManager<P>,
         storage: &ConnectionStorage<P::Packet>,
         event_handler: &dyn EventHandler
     ) -> Result<(), Error> {
@@ -516,7 +508,13 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                     if event_data.enabled {
                         let sm = self.peripheral_pairing_sm.borrow();
                         if let Some(sm) = &*sm {
-                            let res = sm.handle_event(pairing::Event::LinkEncrypted);
+                            let mut ops = PairingOpsImpl {
+                                peer_identity: storage.peer_identity.ok_or(Error::InvalidValue)?,
+                                security_manager: self,
+                                conn_handle: storage.handle.ok_or(Error::InvalidValue)?,
+                                connections,
+                            };
+                            let res = sm.handle_event(pairing::Event::LinkEncrypted, &mut ops);
                             let _ = self.handle_security_error(connections, storage, &res);
                             res?;
                         }
@@ -530,6 +528,28 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                 self.try_send_event(SecurityEventData::SendLongTermKey(event_data.handle))?;
             }
             _ => (),
+        }
+        Ok(())
+    }
+
+    pub(crate) fn handle_app_event<P: PacketPool>(&self,
+                                                  event: types::AppEvent,
+                                                  connections: &ConnectionManager<'_, P>,
+                                                  storage: &ConnectionStorage<<P as PacketPool>::Packet>,) -> Result<(), Error> {
+        match event {
+            types::AppEvent::NumericComparisonConfirm(c) => {
+                let sm = self.peripheral_pairing_sm.borrow();
+                if let Some(sm) = &*sm {
+                    let mut ops = PairingOpsImpl {
+                        peer_identity: storage.peer_identity.ok_or(Error::InvalidValue)?,
+                        security_manager: self,
+                        conn_handle: storage.handle.ok_or(Error::InvalidValue)?,
+                        connections,
+                    };
+                    let res = sm.handle_event(pairing::Event::NumericComparisonConfirm(c), &mut ops);
+                    res?;
+                }
+            }
         }
         Ok(())
     }
@@ -597,5 +617,33 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         self.timer_disable()?;
         self.result_signal.signal(reason);
         Ok(())
+    }
+}
+
+struct PairingOpsImpl<'sm, 'cm, 'cm2, const B: usize, P: PacketPool> {
+    security_manager: &'sm SecurityManager<B>,
+    connections: &'cm ConnectionManager<'cm2, P>,
+    conn_handle: ConnHandle,
+    peer_identity: Identity,
+}
+
+impl<'sm, 'cm, 'cm2, const B: usize, P: PacketPool> PairingOps<P> for PairingOpsImpl<'sm, 'cm, 'cm2, B, P> {
+    fn try_send_packet(&mut self, packet: TxPacket<P>) -> Result<(), Error> {
+        self.security_manager.try_send_packet(packet, self.connections, self.connection_handle())
+    }
+
+    fn try_enable_encryption(&mut self, ltk: &LongTermKey) -> Result<(), Error> {
+        info!("Enabling encryption for {}", self.peer_identity);
+        //let bond_info = self.store_pairing()?;
+        let bond_info = BondInformation {
+            ltk: ltk.clone(),
+            identity: self.peer_identity.clone(),
+        };
+        self.security_manager.add_bond_information(bond_info.clone())?;
+        self.security_manager.try_send_event(SecurityEventData::EnableEncryption(self.conn_handle, bond_info))
+    }
+
+    fn connection_handle(&mut self) -> ConnHandle {
+        self.conn_handle
     }
 }

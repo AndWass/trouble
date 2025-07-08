@@ -363,6 +363,10 @@ impl ConfirmValue {
         self.value
     }
 
+    pub fn is_confirmed(&self) -> bool {
+        self.confirmed
+    }
+
     pub fn yes(mut self) -> Self {
         self.confirmed = true;
         self
@@ -372,6 +376,10 @@ impl ConfirmValue {
         self.confirmed = false;
         self
     }
+}
+
+pub enum AppEvent {
+    NumericComparisonConfirm(ConfirmValue),
 }
 
 /// Out of band (OOB) authentication data

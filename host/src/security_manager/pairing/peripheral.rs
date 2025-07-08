@@ -1,11 +1,9 @@
 use crate::codec::{Decode, Encode};
 use crate::security_manager::constants::ENCRYPTION_KEY_SIZE_128_BITS;
 use crate::security_manager::crypto::{Confirm, DHKey, MacKey, Nonce, PublicKey, SecretKey};
-use crate::security_manager::pairing::util::{
-    make_dhkey_check_packet, make_pairing_random, make_public_key_packet, prepare_packet, CommandAndPayload,
-};
+use crate::security_manager::pairing::util::{choose_pairing_method, make_dhkey_check_packet, make_pairing_random, make_public_key_packet, prepare_packet, CommandAndPayload, PairingMethod};
 use crate::security_manager::pairing::{Event, PairingOps};
-use crate::security_manager::types::{AuthReq, BondingFlag, Command, ConfirmValue, IoCapabilities, PairingFeatures};
+use crate::security_manager::types::{Command, ConfirmValue, IoCapabilities, PairingFeatures};
 use crate::security_manager::{Reason};
 use crate::{Address, Error, LongTermKey, PacketPool};
 use core::cell::RefCell;
@@ -21,7 +19,7 @@ enum Step {
     WaitingPublicKey,
     // Numeric comparison
     WaitingNumericComparisonRandom(NumericCompareConfirmSentTag),
-    WaitingNumericComparisonResult,
+    WaitingNumericComparisonResult(Option<[u8; size_of::<u128>()]>),
     // TODO add pass key entry and OOB
     WaitingDHKeyEa,
     WaitingLinkEncrypted,
@@ -46,7 +44,7 @@ impl NumericCompareConfirmSentTag {
         match ops.try_send_packet(packet) {
             Ok(_) => (),
             Err(error) => {
-                error!("[security manager] Failed to send confirm {:?}", error);
+                error!("[smp] Failed to send confirm {:?}", error);
                 return Err(error);
             }
         }
@@ -72,6 +70,7 @@ struct PairingData {
     peer_address: Address,
     peer_features: PairingFeatures,
     local_features: PairingFeatures,
+    pairing_method: PairingMethod,
     peer_public_key: Option<PublicKey>,
     local_public_key: Option<PublicKey>,
     private_key: Option<SecretKey>,
@@ -98,6 +97,7 @@ impl Pairing {
                 local_address,
                 peer_address,
                 local_features,
+                pairing_method: PairingMethod::JustWorks,
                 peer_features: PairingFeatures::default(),
                 peer_public_key: None,
                 local_public_key: None,
@@ -128,13 +128,27 @@ impl Pairing {
         }
     }
 
-    pub fn handle_event(&self, event: Event) -> Result<(), Error> {
+    pub fn handle_event<P: PacketPool, OPS: PairingOps<P>>(&self, event: Event, ops: &mut OPS) -> Result<(), Error> {
         let current_state = self.current_step.borrow().clone();
         let next_state = match (current_state, event) {
             (Step::WaitingLinkEncrypted, Event::LinkEncrypted) => {
                 // TODO send key data
                 Step::Success
             },
+            (Step::WaitingNumericComparisonResult(ea), Event::NumericComparisonConfirm(c)) => {
+                if c.is_confirmed() {
+                    if let Some(ea) = ea {
+                        let mut pairing_data = self.pairing_data.borrow_mut();
+                        Self::handle_dhkey_ea(&ea, ops, pairing_data.deref_mut())?
+                    }
+                    else {
+                        Step::WaitingDHKeyEa
+                    }
+                }
+                else {
+                    Step::Error(Error::Security(Reason::NumericComparisonFailed))
+                }
+            }
             _ => Step::Error(Error::InvalidState),
         };
 
@@ -171,21 +185,25 @@ impl Pairing {
                     Self::handle_public_key(command.payload, pairing_data);
                     Self::generate_private_public_key_pair(pairing_data, rng)?;
                     Self::send_public_key(ops, pairing_data.local_public_key.as_ref().unwrap())?;
-                    Step::WaitingNumericComparisonRandom(NumericCompareConfirmSentTag::new(ops, pairing_data, rng)?)
+                    if pairing_data.pairing_method == PairingMethod::JustWorks ||
+                        pairing_data.pairing_method == PairingMethod::NumericComparison {
+                        Step::WaitingNumericComparisonRandom(NumericCompareConfirmSentTag::new(ops, pairing_data, rng)?)
+                    }
+                    else {
+                        todo!("Pass key entry and OOB needs to be implemented")
+                    }
                 }
                 (Step::WaitingNumericComparisonRandom(_), Command::PairingRandom) => {
                     Self::handle_numeric_compare_random(command.payload, pairing_data)?;
                     Self::send_nonce(ops, &pairing_data.local_nonce)?;
                     Self::numeric_compare_confirm(event_handler, pairing_data)?
                 }
-
+                (Step::WaitingNumericComparisonResult(None), Command::PairingDhKeyCheck) => {
+                    let ea: [u8; size_of::<u128>()] = command.payload.try_into().map_err(|_| Error::InvalidValue)?;
+                    Step::WaitingNumericComparisonResult(Some(ea))
+                }
                 (Step::WaitingDHKeyEa, Command::PairingDhKeyCheck) => {
-                    Self::compute_ltk(pairing_data)?;
-                    Self::handle_dhkey_ea(command.payload, pairing_data)?;
-                    Self::send_dhkey_eb(ops, pairing_data)?;
-                    ops.try_enable_encryption(&pairing_data.long_term_key)?;
-                    // TODO potentially send and/or receive keys after encryption has been enabled
-                    Step::WaitingLinkEncrypted
+                    Self::handle_dhkey_ea(command.payload, ops, pairing_data)?
                 }
 
                 _ => return Err(Error::InvalidState),
@@ -210,14 +228,9 @@ impl Pairing {
         if !peer_features.security_properties.secure_connection() {
             return Err(Error::Security(Reason::UnspecifiedReason));
         }
-        let local_features = PairingFeatures {
-            io_capabilities: local_io,
-            security_properties: AuthReq::new(BondingFlag::NoBonding),
-            ..Default::default()
-        };
 
         info!(
-            "Received key distribution {:?}",
+            "[smp] Received key distribution {:?}",
             peer_features.initiator_key_distribution
         );
 
@@ -226,8 +239,9 @@ impl Pairing {
             local_features.initiator_key_distribution.set_identity_key();
         }*/
 
-        pairing_data.local_features = local_features;
+        pairing_data.local_features.io_capabilities = local_io;
         pairing_data.peer_features = peer_features;
+        pairing_data.pairing_method = choose_pairing_method(pairing_data.peer_features, pairing_data.local_features);
 
         Ok(())
     }
@@ -247,7 +261,7 @@ impl Pairing {
         match ops.try_send_packet(packet) {
             Ok(_) => {}
             Err(error) => {
-                error!("[security manager] Failed to respond to request {:?}", error);
+                error!("[smp] Failed to respond to request {:?}", error);
                 return Err(error);
             }
         }
@@ -283,7 +297,7 @@ impl Pairing {
         match ops.try_send_packet(packet) {
             Ok(_) => (),
             Err(error) => {
-                error!("[security manager] Failed to send public key {:?}", error);
+                error!("[smp] Failed to send public key {:?}", error);
                 return Err(error);
             }
         }
@@ -297,7 +311,7 @@ impl Pairing {
         match ops.try_send_packet(packet) {
             Ok(_) => (),
             Err(error) => {
-                error!("[security manager] Failed to send pairing random {:?}", error);
+                error!("[smp] Failed to send pairing random {:?}", error);
                 return Err(error);
             }
         }
@@ -328,7 +342,8 @@ impl Pairing {
         Ok(())
     }
 
-    fn handle_dhkey_ea(payload: &[u8], pairing_data: &mut PairingData) -> Result<(), Error> {
+    fn handle_dhkey_ea<P: PacketPool, OPS: PairingOps<P>>(payload: &[u8], ops: &mut OPS, pairing_data: &mut PairingData) -> Result<Step, Error> {
+        Self::compute_ltk(pairing_data)?;
         let expected_payload = pairing_data
             .mac_key
             .as_ref()
@@ -347,7 +362,9 @@ impl Pairing {
         if expected_payload != payload {
             Err(Error::Security(Reason::DHKeyCheckFailed))
         } else {
-            Ok(())
+            Self::send_dhkey_eb(ops, pairing_data)?;
+            ops.try_enable_encryption(&pairing_data.long_term_key)?;
+            Ok(Step::WaitingLinkEncrypted)
         }
     }
 
@@ -373,26 +390,17 @@ impl Pairing {
         let local_public_key = pairing_data.local_public_key.ok_or(Error::InvalidValue)?;
         let vb = pairing_data.peer_nonce.g2(peer_public_key.x(), local_public_key.x(), &pairing_data.local_nonce);
 
-        let local_io = pairing_data.local_features.io_capabilities;
-        let remote_io = pairing_data.peer_features.io_capabilities;
-        if local_io == IoCapabilities::DisplayYesNo || local_io == IoCapabilities::KeyboardDisplay {
-            let confirm_result = match remote_io {
-                IoCapabilities::DisplayYesNo | IoCapabilities::KeyboardDisplay => {
-                    event_handler.on_display_confirm_security_numeric(ConfirmValue::new(vb.0))
-                },
-                _ => {
-                    return Ok(Step::WaitingDHKeyEa);
-                }
-            };
-
-            match confirm_result {
-                Some(false) => Err(Error::Security(Reason::NumericComparisonFailed)),
-                Some(true) => Ok(Step::WaitingDHKeyEa),
-                None => Ok(Step::WaitingNumericComparisonResult)
-            }
+        if pairing_data.pairing_method == PairingMethod::JustWorks {
+            info!("[smp] Just works pairing with compare {}", vb.0);
+            Ok(Step::WaitingDHKeyEa)
         }
         else {
-            Ok(Step::WaitingDHKeyEa)
+            info!("[smp] Numeric comparison pairing with compare {}", vb.0);
+            match event_handler.on_display_confirm_security_numeric(ConfirmValue::new(vb.0)) {
+                Some(false) => Err(Error::Security(Reason::NumericComparisonFailed)),
+                Some(true) => Ok(Step::WaitingDHKeyEa),
+                None => Ok(Step::WaitingNumericComparisonResult(None))
+            }
         }
     }
 }
