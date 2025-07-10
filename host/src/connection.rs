@@ -265,8 +265,18 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
     }
 
     /// Get the encrypted state of the connection
-    pub fn security_level(&self) -> SecurityLevel {
+    pub fn security_level(&self) -> Result<SecurityLevel, Error> {
         self.manager.get_security_level(self.index)
+    }
+
+    /// Confirm that the displayed pass key matches the one displayed on the other party
+    pub fn pass_key_confirm(&self) -> Result<(), Error> {
+        self.manager.pass_key_confirm(self.index, true)
+    }
+
+    /// The displayed pass key does not match the one displayed on the other party
+    pub fn pass_key_cancel(&self) -> Result<(), Error> {
+        self.manager.pass_key_confirm(self.index, false)
     }
 
     /// Request connection to be disconnected.

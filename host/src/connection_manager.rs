@@ -512,35 +512,73 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         mtu
     }
 
+    pub(crate) fn pass_key_confirm(&self, index: u8, confirm: bool) -> Result<(), Error> {
+        #[cfg(feature = "security")]
+        {
+            if self.state.borrow_mut().connections[index as usize].state == ConnectionState::Connected {
+                self.security_manager.handle_pass_key_confirm(
+                    confirm,
+                    self,
+                    &self.state.borrow().connections[index as usize],
+                )
+            } else {
+                Err(Error::Disconnected)
+            }
+        }
+        #[cfg(not(feature = "security"))]
+        Err(Error::NotSupported)
+    }
+
     pub(crate) fn request_security_level(&self, index: u8, level: SecurityLevel) -> Result<(), Error> {
         #[cfg(feature = "security")]
         {
-            let current_level = self.get_security_level(index);
+            let current_level = self.get_security_level(index)?;
+            // We know connection is in connected state
             if current_level >= level {
                 return Ok(());
             }
+            if current_level != SecurityLevel::NoEncryption {
+                return Err(Error::NotSupported);
+            }
             self.state.borrow_mut().connections[index as usize].requested_security_level = level;
-            self.security_manager.initiate(self, &self.state.borrow().connections[index as usize])
-        }
-    }
-
-    pub(crate) fn get_security_level(&self, index: u8) -> SecurityLevel {
-        #[cfg(feature = "security")]
-        {
-            self.state.borrow().connections[index as usize].security_level
+            self.security_manager
+                .initiate(self, &self.state.borrow().connections[index as usize])
         }
         #[cfg(not(feature = "security"))]
-        SecurityLevel::NoEncryptionNoAuth
+        Err(Error::NotSupported)
     }
 
-    pub(crate) fn handle_security_channel(&self, handle: ConnHandle, pdu: Pdu<P::Packet>, event_handler: &dyn EventHandler) -> Result<(), Error> {
+    pub(crate) fn get_security_level(&self, index: u8) -> Result<SecurityLevel, Error> {
+        let state = self.state.borrow();
+        match state.connections[index as usize].state {
+            ConnectionState::Connected => {
+                #[cfg(feature = "security")]
+                {
+                    Ok(state.connections[index as usize].security_level)
+                }
+                #[cfg(not(feature = "security"))]
+                Ok(SecurityLevel::NoEncryption)
+            }
+            _ => Err(Error::Disconnected),
+        }
+    }
+
+    pub(crate) fn handle_security_channel(
+        &self,
+        handle: ConnHandle,
+        pdu: Pdu<P::Packet>,
+        event_handler: &dyn EventHandler,
+    ) -> Result<(), Error> {
         #[cfg(feature = "security")]
         {
             let state = self.state.borrow();
             for storage in state.connections.iter() {
                 match storage.state {
                     ConnectionState::Connected if storage.handle.unwrap() == handle => {
-                        if let Err(error) = self.security_manager.handle_l2cap_command(pdu, self, storage, event_handler) {
+                        if let Err(error) =
+                            self.security_manager
+                                .handle_l2cap_command(pdu, self, storage, event_handler)
+                        {
                             error!("Failed to handle security manager packet, {:?}", error);
                             return Err(error);
                         }

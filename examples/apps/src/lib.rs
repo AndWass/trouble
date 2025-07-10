@@ -8,6 +8,7 @@ pub mod ble_advertise;
 pub mod ble_advertise_multiple;
 pub mod ble_bas_central;
 pub mod ble_bas_central_sec;
+pub mod ble_bas_peripheral_auth;
 pub mod ble_bas_peripheral;
 pub mod ble_bas_peripheral_sec;
 pub mod ble_beacon;

@@ -385,7 +385,24 @@ impl Display for PassKey {
 #[cfg(feature = "defmt")]
 impl defmt::Format for PassKey {
     fn format(&self, fmt: defmt::Formatter) {
-        defmt::write!(fmt, "{}", self)
+        if self.0 < 10 {
+            defmt::write!(fmt, "00000{}", self.0)
+        }
+        else if self.0 < 100 {
+            defmt::write!(fmt, "0000{}", self.0)
+        }
+        else if self.0 < 1000 {
+            defmt::write!(fmt, "000{}", self.0)
+        }
+        else if self.0 < 10000 {
+            defmt::write!(fmt, "00{}", self.0)
+        }
+        else if self.0 < 100000 {
+            defmt::write!(fmt, "0{}", self.0)
+        }
+        else {
+            defmt::write!(fmt, "{}", self.0)
+        }
     }
 }
 

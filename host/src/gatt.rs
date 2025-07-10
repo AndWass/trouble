@@ -95,6 +95,16 @@ impl<'stack, 'server, P: PacketPool> GattConnection<'stack, 'server, P> {
         Ok(Self { connection, server })
     }
 
+    /// Confirm that the displayed pass key matches the one displayed on the other party
+    pub fn pass_key_confirm(&self) -> Result<(), Error> {
+        self.connection.pass_key_confirm()
+    }
+
+    /// The displayed pass key does not match the one displayed on the other party
+    pub fn pass_key_cancel(&self) -> Result<(), Error> {
+        self.connection.pass_key_cancel()
+    }
+
     /// Wait for the next GATT connection event.
     ///
     /// Uses the attribute server to handle the protocol.

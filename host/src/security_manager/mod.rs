@@ -366,6 +366,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
             security_manager: self,
             conn_handle: handle,
             connections,
+            storage,
             peer_identity
         };
         let mut rng_borrow = self.rng.borrow_mut();
@@ -506,6 +507,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                                     security_manager: self,
                                     peer_identity: storage.peer_identity.ok_or(Error::InvalidValue)?,
                                     connections,
+                                    storage,
                                     conn_handle: storage.handle.ok_or(Error::InvalidValue)?
                                 });
                                 let _ = self.handle_security_error(connections, storage, &res);
@@ -535,16 +537,16 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         Ok(())
     }
 
-    pub(crate) fn handle_app_event<P: PacketPool>(&self,
-                                                  event: types::AppEvent,
+    pub(crate) fn handle_pass_key_confirm<P: PacketPool>(&self,
+                                                  confirmed: bool,
                                                   connections: &ConnectionManager<'_, P>,
                                                   storage: &ConnectionStorage<<P as PacketPool>::Packet>,) -> Result<(), Error> {
         let sm = self.peripheral_pairing_sm.borrow();
-        let pairing_event = match event {
-            types::AppEvent::PassKeyConfirm => {
+        let pairing_event = match confirmed {
+            true => {
                 pairing::Event::PassKeyConfirm
             },
-            types::AppEvent::PassKeyCancel => {
+            false => {
                 pairing::Event::PassKeyCancel
             }
         };
@@ -555,6 +557,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                 security_manager: self,
                 conn_handle: storage.handle.ok_or(Error::InvalidValue)?,
                 connections,
+                storage,
             };
             let res = sm.handle_event(pairing_event, &mut ops);
             res?;
@@ -628,14 +631,15 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     }
 }
 
-struct PairingOpsImpl<'sm, 'cm, 'cm2, const B: usize, P: PacketPool> {
+struct PairingOpsImpl<'sm, 'cm, 'cm2, 'cs, const B: usize, P: PacketPool> {
     security_manager: &'sm SecurityManager<B>,
     connections: &'cm ConnectionManager<'cm2, P>,
+    storage: &'cs ConnectionStorage<P::Packet>,
     conn_handle: ConnHandle,
     peer_identity: Identity,
 }
 
-impl<'sm, 'cm, 'cm2, const B: usize, P: PacketPool> PairingOps<P> for PairingOpsImpl<'sm, 'cm, 'cm2, B, P> {
+impl<'sm, 'cm, 'cm2, 'cs, const B: usize, P: PacketPool> PairingOps<P> for PairingOpsImpl<'sm, 'cm, 'cm2, 'cs, B, P> {
     fn try_send_packet(&mut self, packet: TxPacket<P>) -> Result<(), Error> {
         self.security_manager.try_send_packet(packet, self.connections, self.connection_handle())
     }
@@ -656,10 +660,11 @@ impl<'sm, 'cm, 'cm2, const B: usize, P: PacketPool> PairingOps<P> for PairingOps
     }
 
     fn try_display_pass_key(&mut self, pass_key: PassKey) -> Result<(), Error> {
-        self.connections.post_handle_event(self.conn_handle, ConnectionEvent::PassKeyDisplay(pass_key))
+        self.storage.events.try_send(ConnectionEvent::PassKeyDisplay(pass_key)).map_err(|_| Error::OutOfMemory)
     }
 
     fn try_confirm_pass_key(&mut self, pass_key: PassKey) -> Result<(), Error> {
-        self.connections.post_handle_event(self.conn_handle, ConnectionEvent::PassKeyConfirm(pass_key))
+        info!("[smp] Pairing ops confirming pass key {}", pass_key.value());
+        self.storage.events.try_send(ConnectionEvent::PassKeyConfirm(pass_key)).map_err(|_| Error::OutOfMemory)
     }
 }
