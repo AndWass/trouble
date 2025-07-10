@@ -597,17 +597,11 @@ mod tests {
     #[test]
     fn happy_path() {
         let mut pairing_ops = TestOps::default();
-        /*let pairing_data = RefCell::new(PairingData::new());
-        let pairing = Pairing::new(
-            Address::random([1, 2, 3, 4, 5, 6]),
-            Address::random([7, 8, 9, 10, 11, 12]),
-            &pairing_data,
-        );*/
         let event_handler = EventHandler::default();
         let pairing = Pairing::new(
             Address::random([1, 2, 3, 4, 5, 6]),
             Address::random([7, 8, 9, 10, 11, 12]),
-            SecurityLevel::EncryptedNoAuth,
+            SecurityLevel::Encrypted,
         );
         let mut rng = ChaCha12Core::seed_from_u64(1).into();
         // Central sends pairing request, expects pairing response from peripheral
