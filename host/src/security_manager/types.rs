@@ -1,3 +1,4 @@
+use core::fmt::{Display, Formatter};
 use super::constants::ENCRYPTION_KEY_SIZE_128_BITS;
 use crate::codec::{Decode, Encode, Type};
 use crate::security_manager::crypto::IoCap;
@@ -347,39 +348,50 @@ impl defmt::Format for IoCapabilities {
     }
 }
 
-pub struct ConfirmValue {
-    value: u32,
-    confirmed: bool,
+/// A value for use in numeric comparison
+#[derive(Debug)]
+pub struct PassKey(pub(crate) u32);
+
+impl PassKey {
+    /// Get the underlying value as an integer.
+    pub fn value(&self) -> u32 {
+        self.0
+    }
 }
 
-impl ConfirmValue {
-    pub(crate) fn new(value: u32) -> Self {
-        Self {
-            value,
-            confirmed: false,
+impl Display for PassKey {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        if self.0 < 10 {
+            write!(f, "00000{}", self.0)
+        }
+        else if self.0 < 100 {
+            write!(f, "0000{}", self.0)
+        }
+        else if self.0 < 1000 {
+            write!(f, "000{}", self.0)
+        }
+        else if self.0 < 10000 {
+            write!(f, "00{}", self.0)
+        }
+        else if self.0 < 100000 {
+            write!(f, "0{}", self.0)
+        }
+        else {
+            write!(f, "{}", self.0)
         }
     }
-    pub fn value(&self) -> u32 {
-        self.value
-    }
+}
 
-    pub fn is_confirmed(&self) -> bool {
-        self.confirmed
-    }
-
-    pub fn yes(mut self) -> Self {
-        self.confirmed = true;
-        self
-    }
-
-    pub fn no(mut self) -> Self {
-        self.confirmed = false;
-        self
+#[cfg(feature = "defmt")]
+impl defmt::Format for PassKey {
+    fn format(&self, fmt: defmt::Formatter) {
+        defmt::write!(fmt, "{}", self)
     }
 }
 
 pub enum AppEvent {
-    NumericComparisonConfirm(ConfirmValue),
+    PassKeyConfirm,
+    PassKeyCancel,
 }
 
 /// Out of band (OOB) authentication data

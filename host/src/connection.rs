@@ -17,7 +17,7 @@ use crate::pdu::Pdu;
 #[cfg(feature = "gatt")]
 use crate::prelude::{AttributeServer, GattConnection};
 #[cfg(feature = "security")]
-use crate::security_manager::BondInformation;
+use crate::security_manager::{BondInformation, PassKey};
 use crate::{BleHostError, Error, Identity, PacketPool, Stack};
 
 /// Security level of a connection
@@ -148,6 +148,12 @@ pub enum ConnectionEvent {
         /// Bond info for this connection
         bond_info: BondInformation,
     },
+    #[cfg(feature = "security")]
+    /// Request to display a pass key
+    PassKeyDisplay(PassKey),
+    #[cfg(feature = "security")]
+    /// Request to display and confirm a pass key
+    PassKeyConfirm(PassKey),
 }
 
 impl Default for ConnectParams {

@@ -22,7 +22,7 @@ use crate::cursor::{ReadCursor, WriteCursor};
 use crate::pdu::Pdu;
 use crate::prelude::ConnectionEvent;
 #[cfg(feature = "security")]
-use crate::security_manager::BondInformation;
+use crate::security_manager::{BondInformation, PassKey};
 use crate::types::gatt_traits::{AsGatt, FromGatt, FromGattError};
 use crate::types::l2cap::L2capHeader;
 use crate::{config, BleHostError, Error, PacketPool, Stack};
@@ -61,6 +61,13 @@ pub enum GattConnectionEvent<'stack, 'server, P: PacketPool> {
         /// The event that was returned
         event: GattEvent<'stack, 'server, P>,
     },
+
+    #[cfg(feature = "security")]
+    /// Display pass key
+    PassKeyDisplay(PassKey),
+    #[cfg(feature = "security")]
+    /// Confirm pass key
+    PassKeyConfirm(PassKey),
 }
 
 /// Used to manage a GATT connection with a client.
@@ -112,6 +119,16 @@ impl<'stack, 'server, P: PacketPool> GattConnection<'stack, 'server, P> {
                         error!("Failed to update identity in att server: {:?}", e);
                     }
                     GattConnectionEvent::Bonded { bond_info }
+                },
+
+                #[cfg(feature = "security")]
+                ConnectionEvent::PassKeyDisplay(key) => {
+                    GattConnectionEvent::PassKeyDisplay(key)
+                }
+
+                #[cfg(feature = "security")]
+                ConnectionEvent::PassKeyConfirm(key) => {
+                    GattConnectionEvent::PassKeyConfirm(key)
                 }
             },
             Either::Second(data) => GattConnectionEvent::Gatt {

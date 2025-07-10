@@ -43,7 +43,7 @@ use crate::connection_manager::{ConnectionManager, ConnectionStorage, PacketGran
 use crate::cursor::WriteCursor;
 use crate::pdu::Pdu;
 #[cfg(feature = "security")]
-use crate::security_manager::{SecurityEventData, IoCapabilities, ConfirmValue};
+use crate::security_manager::{SecurityEventData, IoCapabilities};
 use crate::types::l2cap::{
     L2capHeader, L2capSignal, L2capSignalHeader, L2CAP_CID_ATT, L2CAP_CID_DYN_START, L2CAP_CID_LE_U_SECURITY_MANAGER,
     L2CAP_CID_LE_U_SIGNAL,
@@ -632,25 +632,6 @@ pub trait EventHandler {
     #[cfg(feature = "security")]
     fn io_capabilities(&self) -> IoCapabilities {
         IoCapabilities::NoInputNoOutput
-    }
-
-    /// The device is requested to display a numeric value for pairing
-    #[cfg(feature = "security")]
-    fn on_display_security_numeric(&self, value: u32) {
-        info!("** Display security {}", value)
-    }
-
-    /// The device is requested to display and confirm a numeric value for pairing
-    ///
-    /// # Return
-    ///
-    ///   * `None` if the confirmation is deferred. The `confirm_token` is used.
-    ///   * `Some(bool)` to immediately confirm the value.
-    ///
-    #[cfg(feature = "security")]
-    fn on_display_confirm_security_numeric(&self,
-                                           confirm: ConfirmValue) -> Option<bool> {
-        Some(false)
     }
 }
 

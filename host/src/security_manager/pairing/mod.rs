@@ -1,6 +1,6 @@
 use bt_hci::param::ConnHandle;
 use crate::{Error, LongTermKey, PacketPool};
-use crate::security_manager::{ConfirmValue, TxPacket};
+use crate::security_manager::{PassKey, Reason, TxPacket};
 
 pub mod peripheral;
 // pub mod central;
@@ -10,6 +10,16 @@ pub trait PairingOps<P: PacketPool> {
     fn try_send_packet(&mut self, packet: TxPacket<P>) -> Result<(), Error>;
     fn try_enable_encryption(&mut self, ltk: &LongTermKey) -> Result<(), Error>;
     fn connection_handle(&mut self) -> ConnHandle;
+
+    fn try_display_pass_key(&mut self, pass_key: PassKey) -> Result<(), Error> {
+        info!("Display pass key: {}", pass_key);
+        Ok(())
+    }
+
+    fn try_confirm_pass_key(&mut self, pass_key: PassKey) -> Result<(), Error> {
+        warn!("Unimplemented confirm pass key: {}", pass_key);
+        Err(Error::Security(Reason::UnspecifiedReason))
+    }
 }
 
 pub struct PairingOpsFns<SP, EE> {
@@ -18,35 +28,8 @@ pub struct PairingOpsFns<SP, EE> {
     connection_handle: ConnHandle,
 }
 
-pub fn pairings_ops_from_fn<SP, EE>(handle: ConnHandle, send_packet: SP, enable_encryption: EE) -> PairingOpsFns<SP, EE>
-{
-    PairingOpsFns {
-        connection_handle: handle,
-        send_packet,
-        enable_encryption,
-    }
-}
-
-impl<P, SP, SE> PairingOps<P> for PairingOpsFns<SP, SE>
-where
-    P: PacketPool,
-    SP: FnMut(TxPacket<P>) -> Result<(), Error>,
-    SE: FnMut(&LongTermKey) -> Result<(), Error>
-{
-    fn try_send_packet(&mut self, packet: TxPacket<P>) -> Result<(), Error> {
-        (self.send_packet)(packet)
-    }
-
-    fn try_enable_encryption(&mut self, ltk: &LongTermKey) -> Result<(), Error> {
-        (self.enable_encryption)(ltk)
-    }
-
-    fn connection_handle(&mut self) -> ConnHandle {
-        self.connection_handle
-    }
-}
-
 pub enum Event {
     LinkEncrypted,
-    NumericComparisonConfirm(ConfirmValue),
+    PassKeyConfirm,
+    PassKeyCancel,
 }

@@ -10,18 +10,6 @@ const CONNECTIONS_MAX: usize = 1;
 /// Max number of L2CAP channels.
 const L2CAP_CHANNELS_MAX: usize = 2; // Signal + att
 
-struct EventHandler;
-
-impl trouble_host::prelude::EventHandler for EventHandler {
-    fn on_display_security_numeric(&self, value: u32) {
-        info!("Pass key entry security: {}", value);
-    }
-
-    fn io_capabilities(&self) -> trouble_host::IoCapabilities {
-        trouble_host::IoCapabilities::DisplayOnly
-    }
-}
-
 // GATT Server definition
 #[gatt_server]
 struct Server {
@@ -107,7 +95,7 @@ where
 /// ```
 async fn ble_task<C: Controller, P: PacketPool>(mut runner: Runner<'_, C, P>) {
     loop {
-        if let Err(e) = runner.run_with_handler(&EventHandler).await {
+        if let Err(e) = runner.run().await {
             #[cfg(feature = "defmt")]
             let e = defmt::Debug2Format(&e);
             panic!("[ble_task] error: {:?}", e);

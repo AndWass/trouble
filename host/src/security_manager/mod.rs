@@ -6,7 +6,7 @@ mod constants;
 mod crypto;
 mod pairing;
 mod types;
-pub use types::{IoCapabilities, ConfirmValue};
+pub use types::{IoCapabilities, PassKey};
 
 use core::cell::RefCell;
 use core::future::{poll_fn, Future};
@@ -34,6 +34,7 @@ use crate::security_manager::pairing::peripheral::Pairing;
 use crate::types::l2cap::L2CAP_CID_LE_U_SECURITY_MANAGER;
 use crate::{Address, Error, Identity, PacketPool};
 use crate::host::EventHandler;
+use crate::prelude::ConnectionEvent;
 use crate::security_manager::types::{AuthReq, BondingFlag};
 
 /// Events of interest to the security manager
@@ -55,7 +56,6 @@ pub struct BondInformation {
     pub ltk: LongTermKey,
     /// Peer identity
     pub identity: Identity,
-    pub security_level: SecurityLevel,
     // Connection Signature Resolving Key (CSRK)?
 }
 
@@ -489,7 +489,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         &self,
         storage: &ConnectionStorage<<P as PacketPool>::Packet>,
     ) -> SecurityLevel {
-
+        SecurityLevel::NoEncryptionNoAuth
     }
 
     /// Handle recevied events from HCI
@@ -539,20 +539,25 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                                                   event: types::AppEvent,
                                                   connections: &ConnectionManager<'_, P>,
                                                   storage: &ConnectionStorage<<P as PacketPool>::Packet>,) -> Result<(), Error> {
-        match event {
-            types::AppEvent::NumericComparisonConfirm(c) => {
-                let sm = self.peripheral_pairing_sm.borrow();
-                if let Some(sm) = &*sm {
-                    let mut ops = PairingOpsImpl {
-                        peer_identity: storage.peer_identity.ok_or(Error::InvalidValue)?,
-                        security_manager: self,
-                        conn_handle: storage.handle.ok_or(Error::InvalidValue)?,
-                        connections,
-                    };
-                    let res = sm.handle_event(pairing::Event::NumericComparisonConfirm(c), &mut ops);
-                    res?;
-                }
+        let sm = self.peripheral_pairing_sm.borrow();
+        let pairing_event = match event {
+            types::AppEvent::PassKeyConfirm => {
+                pairing::Event::PassKeyConfirm
+            },
+            types::AppEvent::PassKeyCancel => {
+                pairing::Event::PassKeyCancel
             }
+        };
+
+        if let Some(sm) = &*sm {
+            let mut ops = PairingOpsImpl {
+                peer_identity: storage.peer_identity.ok_or(Error::InvalidValue)?,
+                security_manager: self,
+                conn_handle: storage.handle.ok_or(Error::InvalidValue)?,
+                connections,
+            };
+            let res = sm.handle_event(pairing_event, &mut ops);
+            res?;
         }
         Ok(())
     }
@@ -648,5 +653,13 @@ impl<'sm, 'cm, 'cm2, const B: usize, P: PacketPool> PairingOps<P> for PairingOps
 
     fn connection_handle(&mut self) -> ConnHandle {
         self.conn_handle
+    }
+
+    fn try_display_pass_key(&mut self, pass_key: PassKey) -> Result<(), Error> {
+        self.connections.post_handle_event(self.conn_handle, ConnectionEvent::PassKeyDisplay(pass_key))
+    }
+
+    fn try_confirm_pass_key(&mut self, pass_key: PassKey) -> Result<(), Error> {
+        self.connections.post_handle_event(self.conn_handle, ConnectionEvent::PassKeyConfirm(pass_key))
     }
 }
