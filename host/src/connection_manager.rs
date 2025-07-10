@@ -266,7 +266,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 storage.metrics.reset();
                 #[cfg(feature = "security")]
                 {
-                    storage.security_level = SecurityLevel::NoEncryptionNoAuth;
+                    storage.security_level = SecurityLevel::NoEncryption;
                     let _ = self.security_manager.disconnect(h, storage.peer_identity);
                 }
                 return Ok(());
@@ -520,8 +520,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 return Ok(());
             }
             self.state.borrow_mut().connections[index as usize].requested_security_level = level;
-            //self.security_manager.initiate(self, &self.state.borrow().connections[index as usize])
-            Ok(())
+            self.security_manager.initiate(self, &self.state.borrow().connections[index as usize])
         }
     }
 
@@ -788,9 +787,9 @@ impl<P> ConnectionStorage<P> {
             #[cfg(feature = "connection-metrics")]
             metrics: Metrics::new(),
             #[cfg(feature = "security")]
-            security_level: SecurityLevel::NoEncryptionNoAuth,
+            security_level: SecurityLevel::NoEncryption,
             #[cfg(feature = "security")]
-            requested_security_level: SecurityLevel::NoEncryptionNoAuth,
+            requested_security_level: SecurityLevel::NoEncryption,
             events: EventChannel::new(),
             #[cfg(feature = "gatt")]
             gatt: GattChannel::new(),

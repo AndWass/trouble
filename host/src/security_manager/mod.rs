@@ -439,7 +439,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         storage: &ConnectionStorage<<P as PacketPool>::Packet>,
     ) -> Result<(), Error> {
         if storage.role.ok_or(Error::InvalidValue)? == LeConnRole::Peripheral {
-            if storage.security_level != SecurityLevel::NoEncryptionNoAuth {
+            if storage.security_level != SecurityLevel::NoEncryption {
                 Err(Error::Security(Reason::UnspecifiedReason))
             } else if storage.requested_security_level > storage.security_level {
                 let handle = storage.handle.ok_or(Error::InvalidValue)?;
@@ -485,13 +485,6 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         self.pairing_result(reason)
     }
 
-    pub(crate) fn get_security_level<P: PacketPool>(
-        &self,
-        storage: &ConnectionStorage<<P as PacketPool>::Packet>,
-    ) -> SecurityLevel {
-        SecurityLevel::NoEncryptionNoAuth
-    }
-
     /// Handle recevied events from HCI
     pub(crate) fn handle_hci_event<P: PacketPool>(
         &self,
@@ -516,10 +509,17 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                                     conn_handle: storage.handle.ok_or(Error::InvalidValue)?
                                 });
                                 let _ = self.handle_security_error(connections, storage, &res);
-                                res?;
+                                match res {
+                                    Ok(_) => {
+                                        storage.security_level = sm.security_level();
+                                        Ok(())
+                                    },
+                                    x => {
+                                        x
+                                    }
+                                }?
                             }
                         }
-                        storage.security_level = self.get_security_level::<P>(storage);
                         Ok(())
                     })?;
                 }

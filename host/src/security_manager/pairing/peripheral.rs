@@ -9,7 +9,7 @@ use crate::security_manager::types::{Command, PassKey, IoCapabilities, PairingFe
 use crate::security_manager::Reason;
 use crate::{Address, Error, LongTermKey, PacketPool};
 use core::cell::RefCell;
-use core::ops::DerefMut;
+use core::ops::{Deref, DerefMut};
 use rand_chacha::ChaCha12Rng;
 use rand_core::RngCore;
 
@@ -29,6 +29,8 @@ enum Step {
     // TODO add OOB
     WaitingDHKeyEa,
     WaitingLinkEncrypted,
+    SendingKeys(i32),
+    ReceivingKeys(i32),
     Success,
     Error(Error),
 }
@@ -171,6 +173,24 @@ impl Pairing {
             x => {
                 self.current_step.replace(x);
                 Ok(())
+            }
+        }
+    }
+
+    pub fn security_level(&self) -> SecurityLevel {
+        let step = self.current_step.borrow();
+        match step.deref() {
+            Step::SendingKeys(_) | Step::ReceivingKeys(_) | Step::Success => {
+                let pairing_data = self.pairing_data.borrow();
+                match &pairing_data.pairing_method {
+                    PairingMethod::JustWorks => SecurityLevel::Encrypted,
+                    PairingMethod::NumericComparison => SecurityLevel::EncryptedAuthenticated,
+                    PairingMethod::PassKeyEntry { .. } => SecurityLevel::EncryptedAuthenticated,
+                    PairingMethod::OutOfBand => SecurityLevel::EncryptedAuthenticated,
+                }
+            },
+            _ => {
+                SecurityLevel::NoEncryption
             }
         }
     }

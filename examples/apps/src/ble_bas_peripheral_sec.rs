@@ -123,8 +123,7 @@ async fn gatt_events_task(server: &Server<'_>, conn: &GattConnection<'_, '_, Def
                         if conn.raw().security_level().encrypted() {
                             None
                         } else {
-                            let _ = conn.raw().request_security_level(SecurityLevel::EncryptedAuthenticated);
-                            Some(AttErrorCode::INSUFFICIENT_AUTHENTICATION)
+                            Some(AttErrorCode::INSUFFICIENT_ENCRYPTION)
                         }
                         #[cfg(not(feature = "security"))]
                         None
@@ -137,8 +136,7 @@ async fn gatt_events_task(server: &Server<'_>, conn: &GattConnection<'_, '_, Def
                         if conn.raw().security_level().encrypted() {
                             None
                         } else {
-                            let _ = conn.raw().request_security_level(SecurityLevel::EncryptedAuthenticated);
-                            Some(AttErrorCode::INSUFFICIENT_AUTHENTICATION)
+                            Some(AttErrorCode::INSUFFICIENT_ENCRYPTION)
                         }
                         #[cfg(not(feature = "security"))]
                         None

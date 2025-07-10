@@ -27,9 +27,9 @@ use crate::{BleHostError, Error, Identity, PacketPool, Stack};
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub enum SecurityLevel {
     /// No encryption and no authentication. All connections start on this security level.
-    NoEncryptionNoAuth,
-    /// Encrypted communication, but not authenticated. Does not provide MITM protection.
-    EncryptedNoAuth,
+    NoEncryption,
+    /// Encrypted but not authenticated communication. Does not provide MITM protection.
+    Encrypted,
     /// Encrypted and authenticated security level. MITM protected.
     EncryptedAuthenticated,
 }
@@ -37,7 +37,7 @@ pub enum SecurityLevel {
 impl SecurityLevel {
     /// Check if the security level is encrypted.
     pub fn encrypted(&self) -> bool {
-        !matches!(self, SecurityLevel::NoEncryptionNoAuth)
+        !matches!(self, SecurityLevel::NoEncryption)
     }
 
     /// Check if the security level is authenticated.
