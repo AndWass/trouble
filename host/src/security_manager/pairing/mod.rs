@@ -3,6 +3,7 @@ use crate::{Error, LongTermKey, PacketPool};
 use crate::security_manager::{PassKey, Reason, TxPacket};
 
 pub mod peripheral;
+pub mod central;
 // pub mod central;
 mod util;
 
