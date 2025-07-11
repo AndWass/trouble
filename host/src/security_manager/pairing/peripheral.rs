@@ -523,7 +523,7 @@ mod tests {
     use crate::security_manager::TxPacket;
     use crate::{Address, Error, LongTermKey, Packet, PacketPool};
     use bt_hci::param::ConnHandle;
-    use rand_chacha::ChaCha12Core;
+    use rand_chacha::{ChaCha12Core, ChaCha12Rng};
     use rand_core::SeedableRng;
 
     #[derive(Debug)]
@@ -597,10 +597,10 @@ mod tests {
             Address::random([7, 8, 9, 10, 11, 12]),
             SecurityLevel::Encrypted,
         );
-        let mut rng = ChaCha12Core::seed_from_u64(1).into();
+        let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(1).into();
         // Central sends pairing request, expects pairing response from peripheral
         pairing
-            .handle_l2cap_command::<HeaplessPool, _>(
+            .handle_l2cap_command::<HeaplessPool, _, _>(
                 Command::PairingRequest,
                 &[0x03, 0, 0x08, 16, 0, 0],
                 &mut pairing_ops,
@@ -637,7 +637,7 @@ mod tests {
         let secret_key = SecretKey::new(&mut rng);
         let packet = make_public_key_packet::<HeaplessPool>(&secret_key.public_key()).unwrap();
         pairing
-            .handle_l2cap_command::<HeaplessPool, _>(
+            .handle_l2cap_command::<HeaplessPool, _, _>(
                 Command::PairingPublicKey,
                 packet.payload(),
                 &mut pairing_ops,
@@ -681,7 +681,7 @@ mod tests {
 
         // Central sends Nonce, expects Nonce
         pairing
-            .handle_l2cap_command::<HeaplessPool, _>(
+            .handle_l2cap_command::<HeaplessPool, _, _>(
                 Command::PairingRandom,
                 &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
                 &mut pairing_ops,
@@ -704,7 +704,7 @@ mod tests {
             assert_eq!(pairing_ops.encryptions.len(), 0);
         }
         pairing
-            .handle_l2cap_command::<HeaplessPool, _>(
+            .handle_l2cap_command::<HeaplessPool, _, _>(
                 Command::PairingDhKeyCheck,
                 &[
                     0x70, 0xa9, 0xf1, 0xd0, 0xcf, 0x52, 0x84, 0xe9, 0xfc, 0x36, 0x9b, 0x84, 0x35, 0x13, 0xc5, 0xed,
