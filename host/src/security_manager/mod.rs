@@ -30,7 +30,7 @@ use crate::connection::SecurityLevel;
 use crate::connection_manager::{ConnectionManager, ConnectionStorage};
 use crate::pdu::Pdu;
 use crate::security_manager::pairing::{PairingOps};
-use crate::security_manager::pairing::peripheral::Pairing;
+use crate::security_manager::pairing::Pairing;
 use crate::types::l2cap::L2CAP_CID_LE_U_SECURITY_MANAGER;
 use crate::{Address, Error, Identity, PacketPool};
 use crate::host::EventHandler;
@@ -195,7 +195,7 @@ pub struct SecurityManager<const BOND_COUNT: usize> {
     /// Security manager data
     state: RefCell<SecurityManagerData<BOND_COUNT>>,
     /// State of an ongoing pairing as a peripheral
-    peripheral_pairing_sm: RefCell<Option<Pairing>>,
+    pairing_sm: RefCell<Option<Pairing>>,
     //pairing_state: RefCell<PairingData>,
     /// Received events
     events: Channel<NoopRawMutex, SecurityEventData, 2>,
@@ -217,7 +217,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
             rng: RefCell::new(ChaCha12Rng::from_seed(random_seed)),
             state: RefCell::new(SecurityManagerData::new()),
             events: Channel::new(),
-            peripheral_pairing_sm: RefCell::new(None),
+            pairing_sm: RefCell::new(None),
             result_signal: Signal::new(),
             timer_expires: RefCell::new(Instant::now() + Self::TIMEOUT_DISABLE),
         }
@@ -342,26 +342,106 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         };
 
         let address = {
-            let mut state_machine = self.peripheral_pairing_sm.borrow_mut();
+            let mut state_machine = self.pairing_sm.borrow_mut();
             if state_machine.is_none() {
-                *state_machine = Some(Pairing::new(
+                *state_machine = Some(Pairing::new_peripheral(
                     self.state.borrow().local_address.unwrap(),
                     peer_address,
                     storage.requested_security_level,
                 ));
             }
 
-            state_machine.as_ref().unwrap().peer_address()
+            let state_machine = state_machine.as_ref().unwrap();
+            if state_machine.is_central() {
+                return Err(Error::InvalidState);
+            }
+            state_machine.peer_address()
         };
 
         if address != peer_address {
             // TODO Is this correct?
-            self.peripheral_pairing_sm.replace(None);
+            self.pairing_sm.replace(None);
             return Err(Error::InvalidValue);
         }
 
         info!("Pairing step with new state machine!");
-        let sm = { self.peripheral_pairing_sm.borrow() };
+        let sm = { self.pairing_sm.borrow() };
+        let mut ops = PairingOpsImpl {
+            security_manager: self,
+            conn_handle: handle,
+            connections,
+            storage,
+            peer_identity
+        };
+        let mut rng_borrow = self.rng.borrow_mut();
+        sm.as_ref()
+            .unwrap()
+            .handle_l2cap_command(command, payload, &mut ops, rng_borrow.deref_mut(), event_handler)
+    }
+
+    fn handle_central<P: PacketPool>(
+        &self,
+        pdu: Pdu<P::Packet>,
+        connections: &ConnectionManager<'_, P>,
+        storage: &ConnectionStorage<P::Packet>,
+        event_handler: &dyn EventHandler,
+    ) -> Result<(), Error> {
+        let handle = storage.handle.ok_or(Error::InvalidValue)?;
+        let peer_address_kind = storage.peer_addr_kind.ok_or(Error::InvalidValue)?;
+        let peer_identity = storage.peer_identity.ok_or(Error::InvalidValue)?;
+        let peer_address = Address {
+            kind: peer_address_kind,
+            addr: peer_identity.bd_addr,
+        };
+        let mut buffer = [0u8; 72];
+        let size = {
+            let size = pdu.len().min(buffer.len());
+            buffer[..size].copy_from_slice(&pdu.as_ref()[..size]);
+            size
+        };
+        if size < 2 {
+            error!("[security manager] Payload size too small {}", size);
+            return Err(Error::Security(Reason::InvalidParameters));
+        }
+        let payload = &buffer[1..size];
+        let command = buffer[0];
+
+        let command = match Command::try_from(command) {
+            Ok(command) => {
+                if usize::from(command.payload_size()) != payload.len() {
+                    error!("[security manager] Payload size mismatch for command {}", command);
+                    return Err(Error::Security(Reason::InvalidParameters));
+                }
+                command
+            }
+            Err(_) => return Err(Error::Security(Reason::CommandNotSupported)),
+        };
+
+        let address = {
+            let mut state_machine = self.pairing_sm.borrow_mut();
+            if state_machine.is_none() {
+                *state_machine = Some(Pairing::new_central(
+                    self.state.borrow().local_address.unwrap(),
+                    peer_address,
+                    storage.requested_security_level,
+                ));
+            }
+
+            let state_machine = state_machine.as_ref().unwrap();
+            if !state_machine.is_central() {
+                return Err(Error::InvalidState);
+            }
+            state_machine.peer_address()
+        };
+
+        if address != peer_address {
+            // TODO Is this correct?
+            self.pairing_sm.replace(None);
+            return Err(Error::InvalidValue);
+        }
+
+        info!("Pairing step with new state machine!");
+        let sm = { self.pairing_sm.borrow() };
         let mut ops = PairingOpsImpl {
             security_manager: self,
             conn_handle: handle,
@@ -388,7 +468,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         let result = if role == LeConnRole::Peripheral {
             self.handle_peripheral(pdu, connections, storage, event_handler)
         } else {
-            todo!()
+            self.handle_central(pdu, connections, storage, event_handler)
         };
 
         if let Err(e) = self.handle_security_error(connections, storage, &result) {
@@ -439,10 +519,11 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         connections: &ConnectionManager<'_, P>,
         storage: &ConnectionStorage<<P as PacketPool>::Packet>,
     ) -> Result<(), Error> {
+        if storage.security_level != SecurityLevel::NoEncryption {
+            return Err(Error::Security(Reason::UnspecifiedReason));
+        }
         if storage.role.ok_or(Error::InvalidValue)? == LeConnRole::Peripheral {
-            if storage.security_level != SecurityLevel::NoEncryption {
-                Err(Error::Security(Reason::UnspecifiedReason))
-            } else if storage.requested_security_level > storage.security_level {
+            if storage.requested_security_level > storage.security_level {
                 let handle = storage.handle.ok_or(Error::InvalidValue)?;
                 let mut req = AuthReq::new(BondingFlag::NoBonding);
                 req.set_man_in_the_middle(storage.requested_security_level.authenticated());
@@ -456,7 +537,33 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
             }
         }
         else {
-            todo!()
+            if storage.requested_security_level > storage.security_level {
+                let mut pairing_sm = self.pairing_sm.borrow_mut();
+                if pairing_sm.is_none() {
+                    let handle = storage.handle.ok_or(Error::InvalidValue)?;
+                    let local_address = self.state.borrow().local_address.clone().ok_or(Error::InvalidValue)?;
+                    let peer_address_kind = storage.peer_addr_kind.ok_or(Error::InvalidValue)?;
+                    let peer_identity = storage.peer_identity.ok_or(Error::InvalidValue)?;
+                    let peer_address = Address {
+                        kind: peer_address_kind,
+                        addr: peer_identity.bd_addr,
+                    };
+                    let mut ops = PairingOpsImpl {
+                        security_manager: self,
+                        conn_handle: handle,
+                        connections,
+                        storage,
+                        peer_identity
+                    };
+                    *pairing_sm = Some(Pairing::initiate_central(local_address, peer_address, storage.requested_security_level, &mut ops)?);
+                    Ok(())
+                }
+                else {
+                    Err(Error::InvalidState)
+                }
+            } else {
+                Ok(())
+            }
         }
     }
 
@@ -467,7 +574,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
 
     /// Channel disconnected
     pub(crate) fn disconnect(&self, handle: ConnHandle, identity: Option<Identity>) -> Result<(), Error> {
-        self.peripheral_pairing_sm.replace(None);
+        self.pairing_sm.replace(None);
         if let Some(identity) = identity {
             self.state.borrow_mut().bond.retain(|x| x.identity != identity);
         }
@@ -501,7 +608,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                     );
                     connections.with_connected_handle(event_data.handle, |storage| {
                         if event_data.enabled {
-                            let sm = self.peripheral_pairing_sm.borrow();
+                            let sm = self.pairing_sm.borrow();
                             if let Some(sm) = &*sm {
                                 let res = sm.handle_event(pairing::Event::LinkEncrypted, &mut PairingOpsImpl {
                                     security_manager: self,
@@ -541,7 +648,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                                                   confirmed: bool,
                                                   connections: &ConnectionManager<'_, P>,
                                                   storage: &ConnectionStorage<<P as PacketPool>::Packet>,) -> Result<(), Error> {
-        let sm = self.peripheral_pairing_sm.borrow();
+        let sm = self.pairing_sm.borrow();
         let pairing_event = match confirmed {
             true => {
                 pairing::Event::PassKeyConfirm

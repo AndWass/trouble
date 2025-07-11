@@ -3,6 +3,7 @@ use crate::security_manager::crypto::{Check, Confirm, DHKey, MacKey, Nonce, Publ
 use crate::security_manager::types::{Command, PairingFeatures, UseOutOfBand};
 use crate::security_manager::{IoCapabilities, Reason, TxPacket};
 use crate::{Address, Error, LongTermKey, PacketPool};
+use crate::prelude::SecurityLevel;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PassKeyEntryAction {
@@ -26,6 +27,15 @@ pub enum PairingMethod {
         peripheral: PassKeyEntryAction,
     },
     OutOfBand,
+}
+
+impl PairingMethod {
+    pub fn security_level(&self) -> SecurityLevel {
+        match self {
+            PairingMethod::JustWorks => SecurityLevel::Encrypted,
+            _ => SecurityLevel::EncryptedAuthenticated
+        }
+    }
 }
 
 #[cfg(feature = "defmt")]

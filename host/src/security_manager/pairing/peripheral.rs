@@ -10,8 +10,7 @@ use crate::security_manager::Reason;
 use crate::{Address, Error, LongTermKey, PacketPool};
 use core::cell::RefCell;
 use core::ops::{Deref, DerefMut};
-use rand_chacha::ChaCha12Rng;
-use rand_core::RngCore;
+use rand_core::{CryptoRng, RngCore};
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -123,12 +122,12 @@ impl Pairing {
         }
     }
 
-    pub fn handle_l2cap_command<P: PacketPool, OPS: PairingOps<P>>(
+    pub fn handle_l2cap_command<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
         &self,
         command: Command,
         payload: &[u8],
         ops: &mut OPS,
-        rng: &mut ChaCha12Rng,
+        rng: &mut RNG,
         event_handler: &dyn EventHandler,
     ) -> Result<(), Error> {
         match self.handle_impl(CommandAndPayload { payload, command }, ops, rng, event_handler) {
@@ -182,12 +181,7 @@ impl Pairing {
         match step.deref() {
             Step::SendingKeys(_) | Step::ReceivingKeys(_) | Step::Success => {
                 let pairing_data = self.pairing_data.borrow();
-                match &pairing_data.pairing_method {
-                    PairingMethod::JustWorks => SecurityLevel::Encrypted,
-                    PairingMethod::NumericComparison => SecurityLevel::EncryptedAuthenticated,
-                    PairingMethod::PassKeyEntry { .. } => SecurityLevel::EncryptedAuthenticated,
-                    PairingMethod::OutOfBand => SecurityLevel::EncryptedAuthenticated,
-                }
+                pairing_data.pairing_method.security_level()
             },
             _ => {
                 SecurityLevel::NoEncryption
@@ -195,11 +189,11 @@ impl Pairing {
         }
     }
 
-    fn handle_impl<P: PacketPool, OPS: PairingOps<P>>(
+    fn handle_impl<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
         &self,
         command: CommandAndPayload,
         ops: &mut OPS,
-        rng: &mut ChaCha12Rng,
+        rng: &mut RNG,
         event_handler: &dyn EventHandler,
     ) -> Result<(), Error> {
         let current_step = self.current_step.borrow().clone();
@@ -330,7 +324,7 @@ impl Pairing {
         pairing_data.peer_public_key = Some(peer_public_key);
     }
 
-    fn generate_private_public_key_pair(pairing_data: &mut PairingData, rng: &mut ChaCha12Rng) -> Result<(), Error> {
+    fn generate_private_public_key_pair<RNG: CryptoRng + RngCore>(pairing_data: &mut PairingData, rng: &mut RNG) -> Result<(), Error> {
         let secret_key = SecretKey::new(rng);
         let public_key = secret_key.public_key();
         let peer_public_key = pairing_data
@@ -462,12 +456,12 @@ impl Pairing {
         }
     }
 
-    fn handle_pass_key_confirm<P: PacketPool, OPS: PairingOps<P>>(
+    fn handle_pass_key_confirm<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
         round: i32,
         payload: &[u8],
         ops: &mut OPS,
         pairing_data: &mut PairingData,
-        rng: &mut ChaCha12Rng,
+        rng: &mut RNG,
     ) -> Result<Step, Error> {
         pairing_data.confirm = Confirm(u128::from_le_bytes(
             payload
