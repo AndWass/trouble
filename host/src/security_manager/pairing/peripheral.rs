@@ -95,17 +95,13 @@ impl Pairing {
     pub fn peer_address(&self) -> Address {
         self.pairing_data.borrow().peer_address
     }
-    pub fn new(local_address: Address, peer_address: Address, requested_level: SecurityLevel) -> Self {
-        let mut local_features = PairingFeatures::default();
-        local_features
-            .security_properties
-            .set_man_in_the_middle(requested_level.authenticated());
+    pub fn new(local_address: Address, peer_address: Address) -> Self {
         Self {
             current_step: RefCell::new(Step::WaitingPairingRequest),
             pairing_data: RefCell::new(PairingData {
                 local_address,
                 peer_address,
-                local_features,
+                local_features: PairingFeatures::default(),
                 pairing_method: PairingMethod::JustWorks,
                 peer_features: PairingFeatures::default(),
                 peer_public_key: None,
@@ -172,8 +168,9 @@ impl Pairing {
                 Err(x)
             }
             x => {
+                let is_success = matches!(x, Step::Success);
                 self.current_step.replace(x);
-                if matches!(x, Step::Success) {
+                if is_success {
                     ops.try_send_connection_event(ConnectionEvent::PairingComplete(self.pairing_data.borrow().pairing_method.security_level()))?;
                 }
                 Ok(())
@@ -519,7 +516,6 @@ impl Pairing {
 #[cfg(test)]
 mod tests {
     extern crate alloc;
-    use crate::prelude::SecurityLevel;
     use crate::security_manager::crypto::{Nonce, PublicKey, SecretKey};
     use crate::security_manager::pairing::peripheral::Pairing;
     use crate::security_manager::pairing::util::make_public_key_packet;
@@ -599,8 +595,7 @@ mod tests {
         let event_handler = EventHandler::default();
         let pairing = Pairing::new(
             Address::random([1, 2, 3, 4, 5, 6]),
-            Address::random([7, 8, 9, 10, 11, 12]),
-            SecurityLevel::Encrypted,
+            Address::random([7, 8, 9, 10, 11, 12])
         );
         let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(1).into();
         // Central sends pairing request, expects pairing response from peripheral
@@ -627,12 +622,12 @@ mod tests {
             assert_eq!(sent_packets.len(), 1);
             let pairing_response = &sent_packets[0];
             assert_eq!(pairing_response.command, Command::PairingResponse);
-            assert_eq!(pairing_response.payload(), &[0x03, 0, 8, 16, 0, 0]);
+            assert_eq!(pairing_response.payload(), &[0x03, 0, 12, 16, 0, 0]);
             assert_eq!(
                 pairing_data.local_features,
                 PairingFeatures {
                     io_capabilities: IoCapabilities::NoInputNoOutput,
-                    security_properties: 8.into(),
+                    security_properties: 12.into(),
                     ..Default::default()
                 }
             );
@@ -729,7 +724,7 @@ mod tests {
             assert_eq!(sent_packets[4].command, Command::PairingDhKeyCheck);
             assert_eq!(
                 sent_packets[4].payload(),
-                [161, 50, 135, 68, 154, 19, 105, 76, 55, 97, 207, 61, 193, 29, 234, 92]
+                [22, 123, 0, 74, 239, 81, 163, 188, 71, 111, 251, 117, 54, 186, 205, 3]
             );
             assert_eq!(pairing_ops.encryptions.len(), 1);
             assert!(matches!(pairing_ops.encryptions[0], LongTermKey(_)));

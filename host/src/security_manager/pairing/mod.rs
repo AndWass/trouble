@@ -17,7 +17,7 @@ pub trait PairingOps<P: PacketPool> {
     fn connection_handle(&mut self) -> ConnHandle;
 
     fn try_send_connection_event(&mut self, event: ConnectionEvent) -> Result<(), Error> {
-        info!("Connection event: {:?}", event);
+        trace!("Connection event: {:?}", event);
         Ok(())
     }
 }
@@ -51,17 +51,17 @@ impl Pairing {
             Pairing::Peripheral(p) => p.security_level(),
         }
     }
-    pub(crate) fn new_central(local_address: Address, peer_address: Address, security_level: SecurityLevel) -> Pairing {
-        Pairing::Central(central::Pairing::new_idle(local_address, peer_address, security_level))
+    pub(crate) fn new_central(local_address: Address, peer_address: Address) -> Pairing {
+        Pairing::Central(central::Pairing::new_idle(local_address, peer_address))
     }
 
-    pub(crate) fn initiate_central<P: PacketPool, OPS: PairingOps<P>>(local_address: Address, peer_address: Address, security_level: SecurityLevel,
+    pub(crate) fn initiate_central<P: PacketPool, OPS: PairingOps<P>>(local_address: Address, peer_address: Address,
                                                                       ops: &mut OPS) -> Result<Self, Error> {
-        Ok(Pairing::Central(central::Pairing::initiate(local_address, peer_address, security_level, ops)?))
+        Ok(Pairing::Central(central::Pairing::initiate(local_address, peer_address, ops)?))
     }
 
-    pub(crate) fn new_peripheral(local_address: Address, peer_address: Address, security_level: SecurityLevel) -> Pairing {
-        Pairing::Peripheral(peripheral::Pairing::new(local_address, peer_address, security_level))
+    pub(crate) fn new_peripheral(local_address: Address, peer_address: Address) -> Pairing {
+        Pairing::Peripheral(peripheral::Pairing::new(local_address, peer_address))
     }
 
     pub(crate) fn peer_address(&self) -> Address {

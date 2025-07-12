@@ -151,11 +151,7 @@ pub struct Pairing {
 }
 
 impl Pairing {
-    pub(crate) fn new_idle(local_address: Address, peer_address: Address, security_level: SecurityLevel) -> Pairing {
-        let mut local_features = PairingFeatures::default();
-        local_features
-            .security_properties
-            .set_man_in_the_middle(security_level.authenticated());
+    pub(crate) fn new_idle(local_address: Address, peer_address: Address) -> Pairing {
         let pairing_data = PairingData {
             pairing_method: PairingMethod::JustWorks,
             local_address,
@@ -166,7 +162,7 @@ impl Pairing {
             peer_secret_rb: 0,
             peer_features: PairingFeatures::default(),
             mac_key: None,
-            local_features,
+            local_features: PairingFeatures::default(),
             peer_nonce: Nonce(0),
             local_nonce: Nonce(0),
             dh_key: None,
@@ -183,10 +179,9 @@ impl Pairing {
     pub(crate) fn initiate<P: PacketPool, OPS: PairingOps<P>>(
         local_address: Address,
         peer_address: Address,
-        security_level: SecurityLevel,
         ops: &mut OPS,
     ) -> Result<Pairing, Error> {
-        let ret = Self::new_idle(local_address, peer_address, security_level);
+        let ret = Self::new_idle(local_address, peer_address);
         {
             let mut pairing_data = ret.pairing_data.borrow_mut();
             let next_step = Step::WaitingPairingResponse(PairingRequestSentTag::new(pairing_data.deref_mut(), ops)?);
@@ -252,8 +247,9 @@ impl Pairing {
                 Err(x)
             },
             x => {
+                let is_success = matches!(x, Step::Success);
                 self.current_step.replace(x);
-                if matches!(x, Step::Success) {
+                if is_success {
                     ops.try_send_connection_event(ConnectionEvent::PairingComplete(self.pairing_data.borrow().pairing_method.security_level()))?;
                 }
                 Ok(())

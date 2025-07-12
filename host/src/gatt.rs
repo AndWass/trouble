@@ -17,7 +17,7 @@ use heapless::Vec;
 use crate::att::{self, Att, AttClient, AttCmd, AttErrorCode, AttReq, AttRsp, AttServer, AttUns, ATT_HANDLE_VALUE_NTF};
 use crate::attribute::{AttributeData, Characteristic, CharacteristicProp, Uuid, CCCD};
 use crate::attribute_server::{AttributeServer, DynamicAttributeServer};
-use crate::connection::Connection;
+use crate::connection::{Connection, SecurityLevel};
 use crate::cursor::{ReadCursor, WriteCursor};
 use crate::pdu::Pdu;
 use crate::prelude::ConnectionEvent;
@@ -68,6 +68,12 @@ pub enum GattConnectionEvent<'stack, 'server, P: PacketPool> {
     #[cfg(feature = "security")]
     /// Confirm pass key
     PassKeyConfirm(PassKey),
+    #[cfg(feature = "security")]
+    /// Pairing success
+    PairingComplete(SecurityLevel),
+    #[cfg(feature = "security")]
+    /// Pairing failed
+    PairingFailed(Error),
 }
 
 /// Used to manage a GATT connection with a client.
@@ -139,6 +145,16 @@ impl<'stack, 'server, P: PacketPool> GattConnection<'stack, 'server, P> {
                 #[cfg(feature = "security")]
                 ConnectionEvent::PassKeyConfirm(key) => {
                     GattConnectionEvent::PassKeyConfirm(key)
+                }
+
+                #[cfg(feature = "security")]
+                ConnectionEvent::PairingComplete(lvl) => {
+                    GattConnectionEvent::PairingComplete(lvl)
+                }
+
+                #[cfg(feature = "security")]
+                ConnectionEvent::PairingFailed(err) => {
+                    GattConnectionEvent::PairingFailed(err)
                 }
             },
             Either::Second(data) => GattConnectionEvent::Gatt {

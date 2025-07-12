@@ -529,18 +529,13 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         Err(Error::NotSupported)
     }
 
-    pub(crate) fn request_security_level(&self, index: u8, level: SecurityLevel) -> Result<(), Error> {
+    pub(crate) fn request_security(&self, index: u8) -> Result<(), Error> {
         #[cfg(feature = "security")]
         {
             let current_level = self.get_security_level(index)?;
-            // We know connection is in connected state
-            if current_level >= level {
-                return Ok(());
-            }
             if current_level != SecurityLevel::NoEncryption {
                 return Err(Error::NotSupported);
             }
-            self.state.borrow_mut().connections[index as usize].requested_security_level = level;
             self.security_manager
                 .initiate(self, &self.state.borrow().connections[index as usize])
         }
@@ -740,8 +735,6 @@ pub struct ConnectionStorage<P> {
     pub metrics: Metrics,
     #[cfg(feature = "security")]
     pub security_level: SecurityLevel,
-    #[cfg(feature = "security")]
-    pub requested_security_level: SecurityLevel,
     pub events: EventChannel,
     pub reassembly: PacketReassembly<P>,
     #[cfg(feature = "gatt")]
@@ -826,8 +819,6 @@ impl<P> ConnectionStorage<P> {
             metrics: Metrics::new(),
             #[cfg(feature = "security")]
             security_level: SecurityLevel::NoEncryption,
-            #[cfg(feature = "security")]
-            requested_security_level: SecurityLevel::NoEncryption,
             events: EventChannel::new(),
             #[cfg(feature = "gatt")]
             gatt: GattChannel::new(),

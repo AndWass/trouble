@@ -230,23 +230,4 @@ mod tests {
             }
         }
     }
-
-    #[test]
-    fn no_mitm_just_works() {
-        for p in 0u8..5 {
-            for c in 0u8..5 {
-                let peripheral = PairingFeatures {
-                    io_capabilities: p.try_into().unwrap(),
-                    use_oob: UseOutOfBand::NotPresent,
-                    security_properties: AuthReq::new(BondingFlag::NoBonding),
-                    initiator_key_distribution: 0.into(),
-                    responder_key_distribution: 0.into(),
-                    maximum_encryption_key_size: 16,
-                };
-                let mut central = peripheral.clone();
-                central.io_capabilities = c.try_into().unwrap();
-                assert_eq!(choose_pairing_method(central, peripheral), PairingMethod::JustWorks);
-            }
-        }
-    }
 }

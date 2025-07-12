@@ -347,7 +347,6 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                 *state_machine = Some(Pairing::new_peripheral(
                     self.state.borrow().local_address.unwrap(),
                     peer_address,
-                    storage.requested_security_level,
                 ));
             }
 
@@ -423,7 +422,6 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                 *state_machine = Some(Pairing::new_central(
                     self.state.borrow().local_address.unwrap(),
                     peer_address,
-                    storage.requested_security_level,
                 ));
             }
 
@@ -523,46 +521,36 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
             return Err(Error::Security(Reason::UnspecifiedReason));
         }
         if storage.role.ok_or(Error::InvalidValue)? == LeConnRole::Peripheral {
-            if storage.requested_security_level > storage.security_level {
-                let handle = storage.handle.ok_or(Error::InvalidValue)?;
-                let mut req = AuthReq::new(BondingFlag::NoBonding);
-                req.set_man_in_the_middle(storage.requested_security_level.authenticated());
-                let mut security_request = self.prepare_packet(Command::SecurityRequest, connections)?;
-                let payload = security_request.payload_mut();
-                payload[0] = req.into();
-                connections.try_outbound(handle, security_request.into_pdu())?;
-                Ok(())
-            } else {
-                Ok(())
-            }
+            let handle = storage.handle.ok_or(Error::InvalidValue)?;
+            let mut security_request = self.prepare_packet(Command::SecurityRequest, connections)?;
+            let payload = security_request.payload_mut();
+            payload[0] = AuthReq::new(BondingFlag::NoBonding).into();
+            connections.try_outbound(handle, security_request.into_pdu())?;
+            Ok(())
         }
         else {
-            if storage.requested_security_level > storage.security_level {
-                let mut pairing_sm = self.pairing_sm.borrow_mut();
-                if pairing_sm.is_none() {
-                    let handle = storage.handle.ok_or(Error::InvalidValue)?;
-                    let local_address = self.state.borrow().local_address.clone().ok_or(Error::InvalidValue)?;
-                    let peer_address_kind = storage.peer_addr_kind.ok_or(Error::InvalidValue)?;
-                    let peer_identity = storage.peer_identity.ok_or(Error::InvalidValue)?;
-                    let peer_address = Address {
-                        kind: peer_address_kind,
-                        addr: peer_identity.bd_addr,
-                    };
-                    let mut ops = PairingOpsImpl {
-                        security_manager: self,
-                        conn_handle: handle,
-                        connections,
-                        storage,
-                        peer_identity
-                    };
-                    *pairing_sm = Some(Pairing::initiate_central(local_address, peer_address, storage.requested_security_level, &mut ops)?);
-                    Ok(())
-                }
-                else {
-                    Err(Error::InvalidState)
-                }
-            } else {
+            let mut pairing_sm = self.pairing_sm.borrow_mut();
+            if pairing_sm.is_none() {
+                let handle = storage.handle.ok_or(Error::InvalidValue)?;
+                let local_address = self.state.borrow().local_address.clone().ok_or(Error::InvalidValue)?;
+                let peer_address_kind = storage.peer_addr_kind.ok_or(Error::InvalidValue)?;
+                let peer_identity = storage.peer_identity.ok_or(Error::InvalidValue)?;
+                let peer_address = Address {
+                    kind: peer_address_kind,
+                    addr: peer_identity.bd_addr,
+                };
+                let mut ops = PairingOpsImpl {
+                    security_manager: self,
+                    conn_handle: handle,
+                    connections,
+                    storage,
+                    peer_identity
+                };
+                *pairing_sm = Some(Pairing::initiate_central(local_address, peer_address, &mut ops)?);
                 Ok(())
+            }
+            else {
+                Err(Error::InvalidState)
             }
         }
     }

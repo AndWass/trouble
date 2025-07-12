@@ -138,6 +138,12 @@ where
                     },
                 }
             },
+            GattConnectionEvent::PairingComplete(lvl) => {
+                info!("[gatt] pairing complete: {}", lvl);
+            }
+            GattConnectionEvent::PairingFailed(err) => {
+                error!("[gatt] pairing error: {:?}", err);
+            }
             GattConnectionEvent::Gatt { event } => {
                 let result = match &event {
                     GattEvent::Read(event) => {

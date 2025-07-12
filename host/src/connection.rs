@@ -25,6 +25,7 @@ use crate::{BleHostError, Error, Identity, PacketPool, Stack};
 /// This describes the various security levels that are supported.
 ///
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum SecurityLevel {
     /// No encryption and no authentication. All connections start on this security level.
     NoEncryption,
@@ -120,6 +121,7 @@ pub struct ConnectParams {
 
 /// A connection event.
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ConnectionEvent {
     /// Connection disconnected.
     Disconnected {
@@ -266,8 +268,8 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
     ///
     /// If the link is already encrypted then this will always generate an error.
     ///
-    pub fn request_security_level(&self, level: SecurityLevel) -> Result<(), Error> {
-        self.manager.request_security_level(self.index, level)
+    pub fn request_security(&self) -> Result<(), Error> {
+        self.manager.request_security(self.index)
     }
 
     /// Get the encrypted state of the connection
