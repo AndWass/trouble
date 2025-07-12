@@ -154,6 +154,12 @@ pub enum ConnectionEvent {
     #[cfg(feature = "security")]
     /// Request to display and confirm a pass key
     PassKeyConfirm(PassKey),
+    #[cfg(feature = "security")]
+    /// Pairing completed
+    PairingComplete(SecurityLevel),
+    #[cfg(feature = "security")]
+    /// Pairing completed
+    PairingFailed(Error),
 }
 
 impl Default for ConnectParams {

@@ -1,9 +1,9 @@
 use bt_hci::param::ConnHandle;
 use rand_core::{CryptoRng, RngCore};
 use crate::{Address, Error, LongTermKey, PacketPool};
-use crate::connection::SecurityLevel;
+use crate::connection::{ConnectionEvent, SecurityLevel};
 use crate::host::EventHandler;
-use crate::security_manager::{PassKey, Reason, TxPacket};
+use crate::security_manager::{TxPacket};
 use crate::security_manager::types::Command;
 
 pub mod peripheral;
@@ -16,14 +16,9 @@ pub trait PairingOps<P: PacketPool> {
     fn try_enable_encryption(&mut self, ltk: &LongTermKey) -> Result<(), Error>;
     fn connection_handle(&mut self) -> ConnHandle;
 
-    fn try_display_pass_key(&mut self, pass_key: PassKey) -> Result<(), Error> {
-        info!("Display pass key: {}", pass_key);
+    fn try_send_connection_event(&mut self, event: ConnectionEvent) -> Result<(), Error> {
+        info!("Connection event: {:?}", event);
         Ok(())
-    }
-
-    fn try_confirm_pass_key(&mut self, pass_key: PassKey) -> Result<(), Error> {
-        warn!("Unimplemented confirm pass key: {}", pass_key);
-        Err(Error::Security(Reason::UnspecifiedReason))
     }
 }
 

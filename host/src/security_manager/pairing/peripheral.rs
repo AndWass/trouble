@@ -11,6 +11,7 @@ use crate::{Address, Error, LongTermKey, PacketPool};
 use core::cell::RefCell;
 use core::ops::{Deref, DerefMut};
 use rand_core::{CryptoRng, RngCore};
+use crate::prelude::ConnectionEvent;
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -167,10 +168,14 @@ impl Pairing {
         match next_state {
             Step::Error(x) => {
                 self.current_step.replace(Step::Error(x.clone()));
+                ops.try_send_connection_event(ConnectionEvent::PairingFailed(x.clone()))?;
                 Err(x)
             }
             x => {
                 self.current_step.replace(x);
+                if matches!(x, Step::Success) {
+                    ops.try_send_connection_event(ConnectionEvent::PairingComplete(self.pairing_data.borrow().pairing_method.security_level()))?;
+                }
                 Ok(())
             }
         }
@@ -217,7 +222,7 @@ impl Pairing {
                             if peripheral == PassKeyEntryAction::Display {
                                 pairing_data.local_secret_rb = 1234;
                                 pairing_data.peer_secret_ra = 1234;
-                                ops.try_display_pass_key(PassKey(pairing_data.local_secret_rb as u32))?;
+                                ops.try_send_connection_event(ConnectionEvent::PassKeyDisplay(PassKey(pairing_data.local_secret_rb as u32)))?;
                                 Step::WaitingPassKeyEntryConfirm(0)
                             }
                             else {
@@ -451,7 +456,7 @@ impl Pairing {
             Ok(Step::WaitingDHKeyEa)
         } else {
             info!("[smp] Numeric comparison pairing with compare {}", vb.0);
-            ops.try_confirm_pass_key(PassKey(vb.0))?;
+            ops.try_send_connection_event(ConnectionEvent::PassKeyConfirm(PassKey(vb.0)))?;
             Ok(Step::WaitingNumericComparisonResult(None))
         }
     }

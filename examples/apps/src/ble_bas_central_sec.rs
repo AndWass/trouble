@@ -51,7 +51,8 @@ where
 
         #[cfg(feature = "security")]
         {
-            if let Err(_error) = central.pairing(&conn).await {
+            conn.request_security_level(SecurityLevel::Encrypted).unwrap();
+            if let Err(_error) = central.pairing(&conn, SecurityLevel::Encrypted).await {
                 error!("Pairing failed");
             }
         }

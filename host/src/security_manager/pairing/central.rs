@@ -1,5 +1,5 @@
 use crate::codec::{Decode, Encode};
-use crate::connection::SecurityLevel;
+use crate::connection::{ConnectionEvent, SecurityLevel};
 use crate::host::EventHandler;
 use crate::security_manager::constants::ENCRYPTION_KEY_SIZE_128_BITS;
 use crate::security_manager::crypto::{Confirm, DHKey, MacKey, Nonce, PublicKey, SecretKey};
@@ -248,10 +248,14 @@ impl Pairing {
         match next_state {
             Step::Error(x) => {
                 self.current_step.replace(Step::Error(x.clone()));
+                ops.try_send_connection_event(ConnectionEvent::PairingFailed(x.clone()))?;
                 Err(x)
-            }
+            },
             x => {
                 self.current_step.replace(x);
+                if matches!(x, Step::Success) {
+                    ops.try_send_connection_event(ConnectionEvent::PairingComplete(self.pairing_data.borrow().pairing_method.security_level()))?;
+                }
                 Ok(())
             }
         }
@@ -291,7 +295,7 @@ impl Pairing {
                             if central == PassKeyEntryAction::Display {
                                 pairing_data.local_secret_ra = 1234;
                                 pairing_data.peer_secret_rb = 1234;
-                                ops.try_display_pass_key(PassKey(pairing_data.local_secret_ra as u32))?;
+                                ops.try_send_connection_event(ConnectionEvent::PassKeyDisplay(PassKey(pairing_data.local_secret_ra as u32)))?;
                                 Step::WaitingPassKeyEntryConfirm(PassKeyEntryConfirmSentTag::new(
                                     0,
                                     pairing_data,
@@ -472,7 +476,7 @@ impl Pairing {
             Ok(Step::WaitingDHKeyEb(DHKeyEaSentTag::new(pairing_data, ops)?))
         } else {
             info!("[smp] Numeric comparison pairing with compare {}", va.0);
-            ops.try_confirm_pass_key(PassKey(va.0))?;
+            ops.try_send_connection_event(ConnectionEvent::PassKeyDisplay(PassKey(va.0)))?;
             Ok(Step::WaitingNumericComparisonResult)
         }
     }

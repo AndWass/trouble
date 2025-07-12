@@ -766,12 +766,7 @@ impl<'sm, 'cm, 'cm2, 'cs, const B: usize, P: PacketPool> PairingOps<P> for Pairi
         self.conn_handle
     }
 
-    fn try_display_pass_key(&mut self, pass_key: PassKey) -> Result<(), Error> {
-        self.storage.events.try_send(ConnectionEvent::PassKeyDisplay(pass_key)).map_err(|_| Error::OutOfMemory)
-    }
-
-    fn try_confirm_pass_key(&mut self, pass_key: PassKey) -> Result<(), Error> {
-        info!("[smp] Pairing ops confirming pass key {}", pass_key.value());
-        self.storage.events.try_send(ConnectionEvent::PassKeyConfirm(pass_key)).map_err(|_| Error::OutOfMemory)
+    fn try_send_connection_event(&mut self, event: ConnectionEvent) -> Result<(), Error> {
+        self.storage.events.try_send(event).map_err(|_| Error::OutOfMemory)
     }
 }
