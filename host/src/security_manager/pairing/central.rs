@@ -75,7 +75,6 @@ impl PassKeyEntryConfirmSentTag {
         ops: &mut OPS,
         rng: &mut RNG,
     ) -> Result<PassKeyEntryConfirmSentTag, Error> {
-        pairing_data.peer_secret_rb = pairing_data.local_secret_ra;
         pairing_data.local_nonce = Nonce::new(rng);
         let rai = 0x80u8 | (((pairing_data.local_secret_ra & (1 << round as u128)) >> (round as u128)) as u8);
         let cai = pairing_data.local_nonce.f4(
@@ -529,8 +528,9 @@ impl Pairing {
         ops: &mut OPS,
         pairing_data: &mut PairingData,
     ) -> Result<(), Error> {
+        let peer_nonce = Nonce(u128::from_le_bytes(payload.try_into().map_err(|_| Error::InvalidValue)?));
         let rai = 0x80u8 | (((pairing_data.local_secret_ra & (1 << round as u128)) >> (round as u128)) as u8);
-        let cbi = pairing_data.peer_nonce.f4(
+        let cbi = peer_nonce.f4(
             pairing_data.peer_public_key.as_ref().ok_or(Error::InvalidValue)?.x(),
             pairing_data.local_public_key.as_ref().ok_or(Error::InvalidValue)?.x(),
             rai,
@@ -538,6 +538,7 @@ impl Pairing {
         if cbi != pairing_data.confirm {
             return Err(Error::Security(Reason::NumericComparisonFailed));
         }
+        pairing_data.peer_nonce = peer_nonce;
         Ok(())
     }
 }

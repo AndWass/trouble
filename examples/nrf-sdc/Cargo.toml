@@ -89,3 +89,11 @@ required-features = ["security"]
 [[bin]]
 name = "ble_bas_central_auth"
 required-features = ["security"]
+
+[[bin]]
+name = "ble_bas_peripheral_pass_key"
+required-features = ["security"]
+
+[[bin]]
+name = "ble_bas_central_pass_key"
+required-features = ["security"]
