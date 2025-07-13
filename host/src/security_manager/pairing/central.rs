@@ -242,7 +242,6 @@ impl Pairing {
                 let mut pairing_data = self.pairing_data.borrow_mut();
                 pairing_data.local_secret_ra = input as u128;
                 pairing_data.peer_secret_rb = pairing_data.local_secret_ra;
-                ops.try_send_connection_event(ConnectionEvent::PassKeyDisplay(PassKey(pairing_data.local_secret_ra as u32)))?;
                 Step::WaitingPassKeyEntryConfirm(PassKeyEntryConfirmSentTag::new(
                     0,
                     pairing_data.deref_mut(),
@@ -485,7 +484,7 @@ impl Pairing {
             Ok(Step::WaitingDHKeyEb(DHKeyEaSentTag::new(pairing_data, ops)?))
         } else {
             info!("[smp] Numeric comparison pairing with compare {}", va.0);
-            ops.try_send_connection_event(ConnectionEvent::PassKeyDisplay(PassKey(va.0)))?;
+            ops.try_send_connection_event(ConnectionEvent::PassKeyConfirm(PassKey(va.0)))?;
             Ok(Step::WaitingNumericComparisonResult)
         }
     }
