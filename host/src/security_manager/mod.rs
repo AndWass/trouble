@@ -49,7 +49,7 @@ pub(crate) enum SecurityEventData {
 
 /// Bond Information
 #[derive(Clone, Debug, PartialEq)]
-pub struct BondInformation {
+pub(crate) struct BondInformation {
     /// Long Term Key (LTK)
     pub ltk: LongTermKey,
     /// Peer identity

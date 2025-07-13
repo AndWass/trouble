@@ -18,7 +18,7 @@ use crate::att::AttErrorCode;
 use crate::channel_manager::ChannelStorage;
 use crate::connection_manager::ConnectionStorage;
 #[cfg(feature = "security")]
-pub use crate::security_manager::{BondInformation, IdentityResolvingKey, LongTermKey, IoCapabilities};
+pub use crate::security_manager::{IdentityResolvingKey, LongTermKey, IoCapabilities};
 
 /// Number of bonding information stored
 pub(crate) const BI_COUNT: usize = 10; // Should be configurable
