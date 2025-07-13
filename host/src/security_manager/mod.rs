@@ -158,34 +158,6 @@ enum PairingMethod {
 
 // TODO: IRK exchange, HCI_LE_­Add_­Device_­To_­Resolving_­List
 
-// LESC LE Security Connections Pairing over L2CAP
-// Central               Peripheral
-// ------ Phase 1 ------
-// Optional Security Request <----
-// Pairing Request ---->
-// Pairing Response <---
-// ------ Phase 2 -------
-// Pairing Public Key ---->
-// Pairing Public Key <----
-// ----- Numeric Comparison -----
-// Pairing Confirm <----
-// Pairing Random ---->
-// Pairing Random <----
-// ----- Passkey -----
-// Keypress notification <----
-// Pairing Confirm ---->
-// Pairing Confirm <----
-// Pairing Random ---->
-// Pairing Random <----
-// ----- Out-of-band -----
-//  --- OOB Confirm ---
-// Pairing Random ---->
-// Pairing Random <----
-// ------ Phase 3 ------
-// Pairing DH key check ---->
-// Pairing DH key check <----
-// ----- Key Distribution (HCI) -----
-
 /// Security manager that handles SM packet
 pub struct SecurityManager<const BOND_COUNT: usize> {
     /// Random generator
