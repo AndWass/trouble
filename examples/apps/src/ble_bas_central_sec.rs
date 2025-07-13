@@ -62,6 +62,10 @@ where
                         error!("Pairing failed: {:?}", err);
                         break;
                     },
+                    ConnectionEvent::Disconnected { reason } => {
+                        error!("Disconnected: {:?}", reason);
+                        break;
+                    }
                     _ => {}
                 }
             }
