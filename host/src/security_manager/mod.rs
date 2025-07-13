@@ -18,7 +18,6 @@ use bt_hci::param::{ConnHandle, LeConnRole};
 pub use crypto::{IdentityResolvingKey, LongTermKey};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
-use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant, TimeoutError, WithTimeout};
 use heapless::Vec;
 use rand_chacha::ChaCha12Rng;
@@ -195,12 +194,9 @@ pub struct SecurityManager<const BOND_COUNT: usize> {
     state: RefCell<SecurityManagerData<BOND_COUNT>>,
     /// State of an ongoing pairing as a peripheral
     pairing_sm: RefCell<Option<Pairing>>,
-    //pairing_state: RefCell<PairingData>,
     /// Received events
     events: Channel<NoopRawMutex, SecurityEventData, 2>,
-    result_signal: Signal<NoopRawMutex, Reason>,
-    /// Timer
-    timer_expires: RefCell<Instant>,
+    /// Io capabilities
     io_capabilities: IoCapabilities
 }
 
@@ -218,8 +214,6 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
             state: RefCell::new(SecurityManagerData::new()),
             events: Channel::new(),
             pairing_sm: RefCell::new(None),
-            result_signal: Signal::new(),
-            timer_expires: RefCell::new(Instant::now() + Self::TIMEOUT_DISABLE),
             io_capabilities
         }
     }
@@ -245,11 +239,6 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                 None
             }
         })
-    }
-
-    /// Get the result of the pairing
-    pub(crate) async fn get_result(&self) -> Reason {
-        self.result_signal.wait().await
     }
 
     /// Has the random generator been seeded?
@@ -505,7 +494,6 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                     }
                 }
             }
-            self.pairing_result(reason)?;
         }
 
         Ok(())
@@ -566,17 +554,6 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         }
 
         Ok(())
-    }
-
-    /// Handle pairing response command
-    fn handle_pairing_failed(&self, payload: &[u8]) -> Result<(), Error> {
-        let reason = if let Ok(r) = Reason::try_from(payload[0]) {
-            r
-        } else {
-            Reason::UnspecifiedReason
-        };
-        error!("[security manager] Pairing failed {}", reason);
-        self.pairing_result(reason)
     }
 
     /// Handle recevied events from HCI
@@ -709,7 +686,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         &self,
     ) -> impl Future<Output = Result<SecurityEventData, TimeoutError>> + use<'_, BOND_COUNT> {
         // try to pop an event from the channel
-        poll_fn(|cx| self.events.poll_receive(cx)).with_deadline(*self.timer_expires.borrow())
+        poll_fn(|cx| self.events.poll_receive(cx)).with_deadline(Instant::now() + Self::TIMEOUT_DISABLE)
     }
 
     /// Long duration, to disable the timer
@@ -720,27 +697,6 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     const TIMEOUT: Duration = Duration::from_secs(Self::TIMEOUT_SECS);
     /// Pairing time-out treshold, used to register wakeup
     const TIMER_WAKE_THRESHOLD: Duration = Duration::from_secs(Self::TIMEOUT_SECS * 2);
-
-    /// Reset timeout timer
-    #[inline]
-    fn timer_reset(&self) -> Result<(), Error> {
-        self.timer_expires.replace(Instant::now() + Self::TIMEOUT);
-        self.try_send_event(SecurityEventData::TimerChange)
-    }
-
-    /// "disable" timeout timer
-    #[inline]
-    fn timer_disable(&self) -> Result<(), Error> {
-        self.timer_expires.replace(Instant::now() + Self::TIMEOUT_DISABLE);
-        self.try_send_event(SecurityEventData::TimerChange)
-    }
-
-    /// Update pairing result
-    fn pairing_result(&self, reason: Reason) -> Result<(), Error> {
-        self.timer_disable()?;
-        self.result_signal.signal(reason);
-        Ok(())
-    }
 }
 
 struct PairingOpsImpl<'sm, 'cm, 'cm2, 'cs, const B: usize, P: PacketPool> {
