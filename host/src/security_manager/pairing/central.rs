@@ -27,8 +27,7 @@ enum Step {
     WaitingNumericComparisonRandom,
     WaitingNumericComparisonResult,
     // Pass key entry
-    WaitingPassKeyInjected,
-    // data is which round/
+    WaitingPassKeyInput,
     WaitingPassKeyEntryConfirm(PassKeyEntryConfirmSentTag),
     WaitingPassKeyEntryRandom(i32),
     // TODO add OOB
@@ -223,7 +222,7 @@ impl Pairing {
         }
     }
 
-    pub fn handle_event<P: PacketPool, OPS: PairingOps<P>>(&self, event: Event, ops: &mut OPS) -> Result<(), Error> {
+    pub fn handle_event<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(&self, event: Event, ops: &mut OPS, rng: &mut RNG) -> Result<(), Error> {
         let current_state = self.current_step.borrow().clone();
         let next_state = match (current_state, event) {
             (Step::WaitingLinkEncrypted, Event::LinkEncrypted) => {
@@ -236,6 +235,18 @@ impl Pairing {
             }
             (Step::WaitingNumericComparisonResult, Event::PassKeyCancel) => {
                 Step::Error(Error::Security(Reason::NumericComparisonFailed))
+            }
+            (Step::WaitingPassKeyInput, Event::PassKeyInput(input)) => {
+                let mut pairing_data = self.pairing_data.borrow_mut();
+                pairing_data.local_secret_ra = input as u128;
+                pairing_data.peer_secret_rb = pairing_data.local_secret_ra;
+                ops.try_send_connection_event(ConnectionEvent::PassKeyDisplay(PassKey(pairing_data.local_secret_ra as u32)))?;
+                Step::WaitingPassKeyEntryConfirm(PassKeyEntryConfirmSentTag::new(
+                    0,
+                    pairing_data.deref_mut(),
+                    ops,
+                    rng,
+                )?)
             }
             (x, Event::PassKeyConfirm | Event::PassKeyCancel) => x,
             _ => Step::Error(Error::InvalidState),
@@ -300,7 +311,8 @@ impl Pairing {
                                     rng,
                                 )?)
                             } else {
-                                todo!("Pass key entry input not supported")
+                                ops.try_send_connection_event(ConnectionEvent::PassKeyInput)?;
+                                Step::WaitingPassKeyInput
                             }
                         }
                         _ => Step::WaitingNumericComparisonConfirm,

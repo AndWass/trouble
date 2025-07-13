@@ -157,6 +157,9 @@ pub enum ConnectionEvent {
     /// Request to display and confirm a pass key
     PassKeyConfirm(PassKey),
     #[cfg(feature = "security")]
+    /// Request to make the user input the pass key
+    PassKeyInput,
+    #[cfg(feature = "security")]
     /// Pairing completed
     PairingComplete(SecurityLevel),
     #[cfg(feature = "security")]
@@ -285,6 +288,11 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
     /// The displayed pass key does not match the one displayed on the other party
     pub fn pass_key_cancel(&self) -> Result<(), Error> {
         self.manager.pass_key_confirm(self.index, false)
+    }
+
+    /// Input the pairing pass key
+    pub fn pass_key_input(&self, pass_key: u32) -> Result<(), Error> {
+        self.manager.pass_key_input(self.index, pass_key)
     }
 
     /// Request connection to be disconnected.

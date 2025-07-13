@@ -22,9 +22,8 @@ enum Step {
     // Numeric comparison
     WaitingNumericComparisonRandom(NumericCompareConfirmSentTag),
     WaitingNumericComparisonResult(Option<[u8; size_of::<u128>()]>),
-    // Pass key entry
-    WaitingPassKeyInjected,
-    //ed data is which round/
+    // Associated data is which round currently being processed.
+    WaitingPassKeyInput(Option<[u8; size_of::<u128>()]>),
     WaitingPassKeyEntryConfirm(i32),
     WaitingPassKeyEntryRandom(i32),
     // TODO add OOB
@@ -137,7 +136,7 @@ impl Pairing {
         }
     }
 
-    pub fn handle_event<P: PacketPool, OPS: PairingOps<P>>(&self, event: Event, ops: &mut OPS) -> Result<(), Error> {
+    pub fn handle_event<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(&self, event: Event, ops: &mut OPS, rng: &mut RNG) -> Result<(), Error> {
         let current_state = self.current_step.borrow().clone();
         let next_state = match (current_state, event) {
             (Step::WaitingLinkEncrypted, Event::LinkEncrypted) => {
@@ -155,10 +154,19 @@ impl Pairing {
             },
             (Step::WaitingNumericComparisonResult(_), Event::PassKeyCancel) => {
                 Step::Error(Error::Security(Reason::NumericComparisonFailed))
-            }
-            (x, Event::PassKeyConfirm | Event::PassKeyCancel) => {
+            },
+            (Step::WaitingPassKeyInput(confirm), Event::PassKeyInput(input)) => {
+                let mut pairing_data = self.pairing_data.borrow_mut();
+                pairing_data.local_secret_rb = input as u128;
+                pairing_data.peer_secret_ra = pairing_data.local_secret_rb;
+                match confirm {
+                    Some(payload) => Self::handle_pass_key_confirm(0, &payload, ops, pairing_data.deref_mut(), rng)?,
+                    None => Step::WaitingPassKeyEntryConfirm(0)
+                }
+            },
+            (x, Event::PassKeyConfirm | Event::PassKeyCancel | Event::PassKeyInput(_)) => {
                 x
-            }
+            },
             _ => Step::Error(Error::InvalidState),
         };
 
@@ -224,7 +232,8 @@ impl Pairing {
                                 Step::WaitingPassKeyEntryConfirm(0)
                             }
                             else {
-                                todo!("Pass key entry input not supported")
+                                ops.try_send_connection_event(ConnectionEvent::PassKeyInput)?;
+                                Step::WaitingPassKeyInput(None)
                             }
                         },
                         _ => Step::WaitingNumericComparisonRandom(NumericCompareConfirmSentTag::new(ops, pairing_data, rng)?)
@@ -240,8 +249,9 @@ impl Pairing {
                     Step::WaitingNumericComparisonResult(Some(ea))
                 }
 
-                (Step::WaitingPassKeyInjected, Command::PairingConfirm) => {
-                    todo!()
+                (Step::WaitingPassKeyInput(_), Command::PairingConfirm) => {
+                    let confirm: [u8; size_of::<u128>()] = command.payload.try_into().map_err(|_| Error::InvalidValue)?;
+                    Step::WaitingPassKeyInput(Some(confirm))
                 }
                 (Step::WaitingPassKeyEntryConfirm(round), Command::PairingConfirm) => {
                     Self::handle_pass_key_confirm(round, command.payload, ops, pairing_data, rng)?

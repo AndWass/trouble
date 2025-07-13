@@ -38,10 +38,10 @@ impl Pairing {
         }
     }
 
-    pub(crate) fn handle_event<P: PacketPool, OPS: PairingOps<P>>(&self, event: Event, ops: &mut OPS) -> Result<(), Error> {
+    pub(crate) fn handle_event<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(&self, event: Event, ops: &mut OPS, rng: &mut RNG) -> Result<(), Error> {
         match self {
-            Pairing::Central(central) => central.handle_event(event, ops),
-            Pairing::Peripheral(peripheral) => peripheral.handle_event(event, ops),
+            Pairing::Central(central) => central.handle_event(event, ops, rng),
+            Pairing::Peripheral(peripheral) => peripheral.handle_event(event, ops, rng),
         }
     }
 
@@ -76,4 +76,5 @@ pub enum Event {
     LinkEncrypted,
     PassKeyConfirm,
     PassKeyCancel,
+    PassKeyInput(u32),
 }

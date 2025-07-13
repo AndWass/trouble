@@ -69,6 +69,9 @@ pub enum GattConnectionEvent<'stack, 'server, P: PacketPool> {
     /// Confirm pass key
     PassKeyConfirm(PassKey),
     #[cfg(feature = "security")]
+    /// Input the pass key
+    PassKeyInput,
+    #[cfg(feature = "security")]
     /// Pairing success
     PairingComplete(SecurityLevel),
     #[cfg(feature = "security")]
@@ -111,6 +114,11 @@ impl<'stack, 'server, P: PacketPool> GattConnection<'stack, 'server, P> {
         self.connection.pass_key_cancel()
     }
 
+    /// Input the pairing pass key
+    pub fn pass_key_input(&self, pass_key: u32) -> Result<(), Error> {
+        self.connection.pass_key_input(pass_key)
+    }
+
     /// Wait for the next GATT connection event.
     ///
     /// Uses the attribute server to handle the protocol.
@@ -145,6 +153,11 @@ impl<'stack, 'server, P: PacketPool> GattConnection<'stack, 'server, P> {
                 #[cfg(feature = "security")]
                 ConnectionEvent::PassKeyConfirm(key) => {
                     GattConnectionEvent::PassKeyConfirm(key)
+                }
+
+                #[cfg(feature = "security")]
+                ConnectionEvent::PassKeyInput => {
+                    GattConnectionEvent::PassKeyInput
                 }
 
                 #[cfg(feature = "security")]

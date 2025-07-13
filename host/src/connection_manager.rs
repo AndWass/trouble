@@ -529,6 +529,23 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         Err(Error::NotSupported)
     }
 
+    pub(crate) fn pass_key_input(&self, index: u8, pass_key: u32) -> Result<(), Error> {
+        #[cfg(feature = "security")]
+        {
+            if self.state.borrow_mut().connections[index as usize].state == ConnectionState::Connected {
+                self.security_manager.handle_pass_key_input(
+                    pass_key,
+                    self,
+                    &self.state.borrow().connections[index as usize],
+                )
+            } else {
+                Err(Error::Disconnected)
+            }
+        }
+        #[cfg(not(feature = "security"))]
+        Err(Error::NotSupported)
+    }
+
     pub(crate) fn request_security(&self, index: u8) -> Result<(), Error> {
         #[cfg(feature = "security")]
         {
