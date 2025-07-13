@@ -279,7 +279,7 @@ impl Pairing {
         let mut pairing_data = self.pairing_data.borrow_mut();
         let pairing_data = pairing_data.deref_mut();
         let next_step = {
-            info!("Handling {:?}, step {:?}", command.command, current_step);
+            trace!("Handling {:?}, step {:?}", command.command, current_step);
             match (current_step, command.command) {
                 (Step::Idle, Command::SecurityRequest) => {
                     Step::WaitingPairingResponse(PairingRequestSentTag::new(pairing_data, ops)?)
@@ -371,16 +371,6 @@ impl Pairing {
         if !peer_features.security_properties.secure_connection() {
             return Err(Error::Security(Reason::UnspecifiedReason));
         }
-
-        info!(
-            "[smp] Received key distribution {:?}",
-            peer_features.initiator_key_distribution
-        );
-
-        // Set identity key flag
-        /*if peer_features.initiator_key_distribution.identity_key() {
-            local_features.initiator_key_distribution.set_identity_key();
-        }*/
 
         pairing_data.peer_features = peer_features;
         pairing_data.pairing_method = choose_pairing_method(pairing_data.local_features, pairing_data.peer_features);

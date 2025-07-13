@@ -325,7 +325,6 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
             return Err(Error::InvalidValue);
         }
 
-        info!("Pairing step with new state machine!");
         let sm = { self.pairing_sm.borrow() };
         let mut ops = PairingOpsImpl {
             security_manager: self,
@@ -400,7 +399,6 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
             return Err(Error::InvalidValue);
         }
 
-        info!("Pairing step with new state machine!");
         let sm = { self.pairing_sm.borrow() };
         let mut ops = PairingOpsImpl {
             security_manager: self,
@@ -537,8 +535,8 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         match event {
             Event::EncryptionChangeV1(event_data) => match event_data.status.to_result() {
                 Ok(()) => {
-                    warn!(
-                        "[security manager] Handle Encryption Changed event {}",
+                    trace!(
+                        "[smp] Encryption Changed event {}",
                         event_data.enabled
                     );
                     connections.with_connected_handle(event_data.handle, |storage| {
