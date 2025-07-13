@@ -10,6 +10,7 @@ use crate::security_manager::Reason;
 use crate::{Address, Error, LongTermKey, PacketPool};
 use core::cell::RefCell;
 use core::ops::{Deref, DerefMut};
+use rand::Rng;
 use rand_core::{CryptoRng, RngCore};
 use crate::prelude::ConnectionEvent;
 
@@ -217,8 +218,8 @@ impl Pairing {
                         PairingMethod::OutOfBand => todo!("OOB not implemented"),
                         PairingMethod::PassKeyEntry {peripheral, ..} => {
                             if peripheral == PassKeyEntryAction::Display {
-                                pairing_data.local_secret_rb = 1234;
-                                pairing_data.peer_secret_ra = 1234;
+                                pairing_data.local_secret_rb = rng.sample(rand::distributions::Uniform::new_inclusive(0, 999999));
+                                pairing_data.peer_secret_ra = pairing_data.local_secret_rb;
                                 ops.try_send_connection_event(ConnectionEvent::PassKeyDisplay(PassKey(pairing_data.local_secret_rb as u32)))?;
                                 Step::WaitingPassKeyEntryConfirm(0)
                             }
