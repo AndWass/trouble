@@ -17,3 +17,4 @@ pub mod ble_l2cap_peripheral;
 pub mod ble_scanner;
 pub mod high_throughput_ble_l2cap_central;
 pub mod high_throughput_ble_l2cap_peripheral;
+pub mod ble_bas_central_auth;

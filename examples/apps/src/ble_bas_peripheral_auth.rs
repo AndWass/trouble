@@ -44,7 +44,7 @@ where
     info!("Our address = {}", address);
 
     let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
-    let stack = trouble_host::new(controller, &mut resources)
+    let stack = trouble_host::new(controller, &mut resources, IoCapabilities::DisplayYesNo)
         .set_random_address(address)
         .set_random_generator_seed(random_generator);
     let Host {
@@ -94,14 +94,8 @@ where
 /// spawner.must_spawn(ble_task(runner));
 /// ```
 async fn ble_task<C: Controller, P: PacketPool>(mut runner: Runner<'_, C, P>) {
-    struct AppEventHandler;
-    impl EventHandler for AppEventHandler {
-        fn io_capabilities(&self) -> IoCapabilities {
-            IoCapabilities::DisplayYesNo
-        }
-    }
     loop {
-        if let Err(e) = runner.run_with_handler(&mut AppEventHandler).await {
+        if let Err(e) = runner.run().await {
             #[cfg(feature = "defmt")]
             let e = defmt::Debug2Format(&e);
             panic!("[ble_task] error: {:?}", e);

@@ -554,6 +554,7 @@ pub fn new<
 >(
     controller: C,
     resources: &'resources mut HostResources<P, CONNS, CHANNELS, ADV_SETS>,
+    io_capabilities: IoCapabilities,
 ) -> Stack<'resources, C, P> {
     unsafe fn transmute_slice<T>(x: &mut [T]) -> &'static mut [T] {
         unsafe { core::mem::transmute(x) }
@@ -574,7 +575,7 @@ pub fn new<
 
     let advertise_handles = &mut *resources.advertise_handles.write([AdvHandleState::None; ADV_SETS]);
     let advertise_handles: &'static mut [AdvHandleState] = unsafe { transmute_slice(advertise_handles) };
-    let host: BleHost<'_, C, P> = BleHost::new(controller, connections, channels, advertise_handles);
+    let host: BleHost<'_, C, P> = BleHost::new(controller, connections, channels, advertise_handles, io_capabilities);
 
     Stack { host }
 }

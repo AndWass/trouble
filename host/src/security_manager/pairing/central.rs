@@ -1,6 +1,5 @@
 use crate::codec::{Decode, Encode};
 use crate::connection::{ConnectionEvent, SecurityLevel};
-use crate::host::EventHandler;
 use crate::security_manager::constants::ENCRYPTION_KEY_SIZE_128_BITS;
 use crate::security_manager::crypto::{Confirm, DHKey, MacKey, Nonce, PublicKey, SecretKey};
 use crate::security_manager::pairing::util::{
@@ -151,7 +150,9 @@ pub struct Pairing {
 }
 
 impl Pairing {
-    pub(crate) fn new_idle(local_address: Address, peer_address: Address) -> Pairing {
+    pub(crate) fn new_idle(local_address: Address, peer_address: Address, local_io: IoCapabilities) -> Pairing {
+        let mut local_features = PairingFeatures::default();
+        local_features.io_capabilities = local_io;
         let pairing_data = PairingData {
             pairing_method: PairingMethod::JustWorks,
             local_address,
@@ -162,7 +163,7 @@ impl Pairing {
             peer_secret_rb: 0,
             peer_features: PairingFeatures::default(),
             mac_key: None,
-            local_features: PairingFeatures::default(),
+            local_features,
             peer_nonce: Nonce(0),
             local_nonce: Nonce(0),
             dh_key: None,
@@ -180,8 +181,9 @@ impl Pairing {
         local_address: Address,
         peer_address: Address,
         ops: &mut OPS,
+        local_io: IoCapabilities
     ) -> Result<Pairing, Error> {
-        let ret = Self::new_idle(local_address, peer_address);
+        let ret = Self::new_idle(local_address, peer_address, local_io);
         {
             let mut pairing_data = ret.pairing_data.borrow_mut();
             let next_step = Step::WaitingPairingResponse(PairingRequestSentTag::new(pairing_data.deref_mut(), ops)?);
@@ -211,11 +213,11 @@ impl Pairing {
         payload: &[u8],
         ops: &mut OPS,
         rng: &mut RNG,
-        event_handler: &dyn EventHandler,
     ) -> Result<(), Error> {
-        match self.handle_impl(CommandAndPayload { payload, command }, ops, rng, event_handler) {
+        match self.handle_impl(CommandAndPayload { payload, command }, ops, rng) {
             Ok(()) => Ok(()),
             Err(error) => {
+                error!("[smp] Failed to handle command {:?}, {:?}", command, error);
                 self.current_step.replace(Step::Error(error.clone()));
                 Err(error)
             }
@@ -274,7 +276,6 @@ impl Pairing {
         command: CommandAndPayload,
         ops: &mut OPS,
         rng: &mut RNG,
-        event_handler: &dyn EventHandler,
     ) -> Result<(), Error> {
         let current_step = self.current_step.borrow().clone();
         let mut pairing_data = self.pairing_data.borrow_mut();
@@ -290,7 +291,7 @@ impl Pairing {
                     Step::WaitingPairingResponse(x)
                 }
                 (Step::WaitingPairingResponse(_), Command::PairingResponse) => {
-                    Self::handle_pairing_response(command.payload, ops, pairing_data, event_handler.io_capabilities())?;
+                    Self::handle_pairing_response(command.payload, ops, pairing_data)?;
                     Self::generate_private_public_key_pair(pairing_data, rng)?;
                     Self::send_public_key(ops, pairing_data.local_public_key.as_ref().unwrap())?;
                     Step::WaitingPublicKey
@@ -364,7 +365,6 @@ impl Pairing {
         payload: &[u8],
         ops: &mut OPS,
         pairing_data: &mut PairingData,
-        local_io: IoCapabilities,
     ) -> Result<(), Error> {
         let peer_features = PairingFeatures::decode(payload).map_err(|_| Error::Security(Reason::InvalidParameters))?;
         if peer_features.maximum_encryption_key_size < ENCRYPTION_KEY_SIZE_128_BITS {
@@ -384,9 +384,9 @@ impl Pairing {
             local_features.initiator_key_distribution.set_identity_key();
         }*/
 
-        pairing_data.local_features.io_capabilities = local_io;
         pairing_data.peer_features = peer_features;
-        pairing_data.pairing_method = choose_pairing_method(pairing_data.peer_features, pairing_data.local_features);
+        pairing_data.pairing_method = choose_pairing_method(pairing_data.local_features, pairing_data.peer_features);
+        info!("[smp] Pairing method {:?}", pairing_data.pairing_method);
 
         Ok(())
     }

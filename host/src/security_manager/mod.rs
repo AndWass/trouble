@@ -28,7 +28,6 @@ pub use types::Reason;
 
 use crate::connection::SecurityLevel;
 use crate::connection_manager::{ConnectionManager, ConnectionStorage};
-use crate::host::EventHandler;
 use crate::pdu::Pdu;
 use crate::prelude::ConnectionEvent;
 use crate::security_manager::pairing::Pairing;
@@ -202,6 +201,7 @@ pub struct SecurityManager<const BOND_COUNT: usize> {
     result_signal: Signal<NoopRawMutex, Reason>,
     /// Timer
     timer_expires: RefCell<Instant>,
+    io_capabilities: IoCapabilities
 }
 
 enum TimerCommand {
@@ -211,7 +211,7 @@ enum TimerCommand {
 
 impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     /// Create a new SecurityManager
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(io_capabilities: IoCapabilities) -> Self {
         let random_seed = [0u8; 32];
         Self {
             rng: RefCell::new(ChaCha12Rng::from_seed(random_seed)),
@@ -220,6 +220,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
             pairing_sm: RefCell::new(None),
             result_signal: Signal::new(),
             timer_expires: RefCell::new(Instant::now() + Self::TIMEOUT_DISABLE),
+            io_capabilities
         }
     }
 
@@ -308,7 +309,6 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         pdu: Pdu<P::Packet>,
         connections: &ConnectionManager<'_, P>,
         storage: &ConnectionStorage<P::Packet>,
-        event_handler: &dyn EventHandler,
     ) -> Result<(), Error> {
         let handle = storage.handle.ok_or(Error::InvalidValue)?;
         let peer_address_kind = storage.peer_addr_kind.ok_or(Error::InvalidValue)?;
@@ -347,6 +347,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                 *state_machine = Some(Pairing::new_peripheral(
                     self.state.borrow().local_address.unwrap(),
                     peer_address,
+                    self.io_capabilities,
                 ));
             }
 
@@ -375,7 +376,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         let mut rng_borrow = self.rng.borrow_mut();
         sm.as_ref()
             .unwrap()
-            .handle_l2cap_command(command, payload, &mut ops, rng_borrow.deref_mut(), event_handler)
+            .handle_l2cap_command(command, payload, &mut ops, rng_borrow.deref_mut())
     }
 
     fn handle_central<P: PacketPool>(
@@ -383,7 +384,6 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         pdu: Pdu<P::Packet>,
         connections: &ConnectionManager<'_, P>,
         storage: &ConnectionStorage<P::Packet>,
-        event_handler: &dyn EventHandler,
     ) -> Result<(), Error> {
         let handle = storage.handle.ok_or(Error::InvalidValue)?;
         let peer_address_kind = storage.peer_addr_kind.ok_or(Error::InvalidValue)?;
@@ -422,6 +422,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                 *state_machine = Some(Pairing::new_central(
                     self.state.borrow().local_address.unwrap(),
                     peer_address,
+                    self.io_capabilities,
                 ));
             }
 
@@ -450,7 +451,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         let mut rng_borrow = self.rng.borrow_mut();
         sm.as_ref()
             .unwrap()
-            .handle_l2cap_command(command, payload, &mut ops, rng_borrow.deref_mut(), event_handler)
+            .handle_l2cap_command(command, payload, &mut ops, rng_borrow.deref_mut())
     }
 
     /// Handle packet
@@ -459,14 +460,13 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         pdu: Pdu<P::Packet>,
         connections: &ConnectionManager<P>,
         storage: &ConnectionStorage<P::Packet>,
-        event_handler: &dyn EventHandler,
     ) -> Result<(), Error> {
         let role = storage.role.ok_or(Error::InvalidValue)?;
 
         let result = if role == LeConnRole::Peripheral {
-            self.handle_peripheral(pdu, connections, storage, event_handler)
+            self.handle_peripheral(pdu, connections, storage)
         } else {
-            self.handle_central(pdu, connections, storage, event_handler)
+            self.handle_central(pdu, connections, storage)
         };
 
         if let Err(e) = self.handle_security_error(connections, storage, &result) {
@@ -545,7 +545,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
                     storage,
                     peer_identity,
                 };
-                *pairing_sm = Some(Pairing::initiate_central(local_address, peer_address, &mut ops)?);
+                *pairing_sm = Some(Pairing::initiate_central(local_address, peer_address, &mut ops, self.io_capabilities)?);
                 Ok(())
             } else {
                 Err(Error::InvalidState)

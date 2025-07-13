@@ -196,13 +196,14 @@ where
         connections: &'d mut [ConnectionStorage<P::Packet>],
         channels: &'d mut [ChannelStorage<P::Packet>],
         advertise_handles: &'d mut [AdvHandleState],
+        io_capabilities: IoCapabilities
     ) -> Self {
         Self {
             address: None,
             initialized: OnceLock::new(),
             metrics: RefCell::new(HostMetrics::default()),
             controller,
-            connections: ConnectionManager::new(connections, P::MTU as u16 - 4),
+            connections: ConnectionManager::new(connections, P::MTU as u16 - 4, io_capabilities),
             channels: ChannelManager::new(channels),
             #[cfg(feature = "gatt")]
             att_client: Channel::new(),
@@ -627,12 +628,6 @@ pub trait EventHandler {
     /// Handle extended advertising reports
     #[cfg(feature = "scan")]
     fn on_ext_adv_reports(&self, reports: bt_hci::param::LeExtAdvReportsIter) {}
-
-    /// Get the IO capabilities of this device.
-    #[cfg(feature = "security")]
-    fn io_capabilities(&self) -> IoCapabilities {
-        IoCapabilities::NoInputNoOutput
-    }
 }
 
 struct DummyHandler;

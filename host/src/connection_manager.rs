@@ -16,7 +16,7 @@ use crate::pdu::Pdu;
 use crate::prelude::sar::PacketReassembly;
 #[cfg(feature = "security")]
 use crate::security_manager::{SecurityEventData, SecurityManager};
-use crate::{config, Error, Identity, PacketPool};
+use crate::{config, Error, Identity, IoCapabilities, PacketPool};
 use crate::host::EventHandler;
 
 struct State<'d, P> {
@@ -57,7 +57,7 @@ pub(crate) struct ConnectionManager<'d, P: PacketPool> {
 }
 
 impl<'d, P: PacketPool> ConnectionManager<'d, P> {
-    pub(crate) fn new(connections: &'d mut [ConnectionStorage<P::Packet>], default_att_mtu: u16) -> Self {
+    pub(crate) fn new(connections: &'d mut [ConnectionStorage<P::Packet>], default_att_mtu: u16, io_capabilities: IoCapabilities) -> Self {
         Self {
             state: RefCell::new(State {
                 connections,
@@ -69,7 +69,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
             }),
             outbound: Channel::new(),
             #[cfg(feature = "security")]
-            security_manager: SecurityManager::new(),
+            security_manager: SecurityManager::new(io_capabilities),
         }
     }
 
@@ -589,7 +589,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                     ConnectionState::Connected if storage.handle.unwrap() == handle => {
                         if let Err(error) =
                             self.security_manager
-                                .handle_l2cap_command(pdu, self, storage, event_handler)
+                                .handle_l2cap_command(pdu, self, storage)
                         {
                             error!("Failed to handle security manager packet, {:?}", error);
                             return Err(error);
@@ -959,7 +959,7 @@ mod tests {
 
     fn setup() -> &'static ConnectionManager<'static, DefaultPacketPool> {
         let storage = Box::leak(Box::new([const { ConnectionStorage::new() }; 3]));
-        let mgr = ConnectionManager::new(&mut storage[..], 23);
+        let mgr = ConnectionManager::new(&mut storage[..], 23, IoCapabilities::NoInputNoOutput);
         Box::leak(Box::new(mgr))
     }
 

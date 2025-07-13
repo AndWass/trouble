@@ -1,6 +1,5 @@
 use crate::codec::{Decode, Encode};
 use crate::connection::SecurityLevel;
-use crate::host::EventHandler;
 use crate::security_manager::constants::ENCRYPTION_KEY_SIZE_128_BITS;
 use crate::security_manager::crypto::{Confirm, DHKey, MacKey, Nonce, PublicKey, SecretKey};
 use crate::security_manager::pairing::util::{choose_pairing_method, make_confirm_packet, make_dhkey_check_packet, make_pairing_random, make_public_key_packet, prepare_packet, CommandAndPayload, PairingMethod, PassKeyEntryAction};
@@ -95,13 +94,15 @@ impl Pairing {
     pub fn peer_address(&self) -> Address {
         self.pairing_data.borrow().peer_address
     }
-    pub fn new(local_address: Address, peer_address: Address) -> Self {
+    pub fn new(local_address: Address, peer_address: Address, local_io: IoCapabilities) -> Self {
+        let mut local_features = PairingFeatures::default();
+        local_features.io_capabilities = local_io;
         Self {
             current_step: RefCell::new(Step::WaitingPairingRequest),
             pairing_data: RefCell::new(PairingData {
                 local_address,
                 peer_address,
-                local_features: PairingFeatures::default(),
+                local_features,
                 pairing_method: PairingMethod::JustWorks,
                 peer_features: PairingFeatures::default(),
                 peer_public_key: None,
@@ -125,11 +126,11 @@ impl Pairing {
         payload: &[u8],
         ops: &mut OPS,
         rng: &mut RNG,
-        event_handler: &dyn EventHandler,
     ) -> Result<(), Error> {
-        match self.handle_impl(CommandAndPayload { payload, command }, ops, rng, event_handler) {
+        match self.handle_impl(CommandAndPayload { payload, command }, ops, rng) {
             Ok(()) => Ok(()),
             Err(error) => {
+                error!("[smp] Failed to handle command {:?}, {:?}", command, error);
                 self.current_step.replace(Step::Error(error.clone()));
                 Err(error)
             }
@@ -205,7 +206,6 @@ impl Pairing {
         command: CommandAndPayload,
         ops: &mut OPS,
         rng: &mut RNG,
-        event_handler: &dyn EventHandler,
     ) -> Result<(), Error> {
         let current_step = self.current_step.borrow().clone();
         let mut pairing_data = self.pairing_data.borrow_mut();
@@ -214,7 +214,7 @@ impl Pairing {
             info!("Handling {:?}, step {:?}", command.command, current_step);
             match (current_step, command.command) {
                 (Step::WaitingPairingRequest, Command::PairingRequest) => {
-                    Self::handle_pairing_request(command.payload, ops, pairing_data, event_handler.io_capabilities())?;
+                    Self::handle_pairing_request(command.payload, ops, pairing_data)?;
                     Self::send_pairing_response(ops, pairing_data)?;
                     Step::WaitingPublicKey
                 }
@@ -282,7 +282,6 @@ impl Pairing {
         payload: &[u8],
         ops: &mut OPS,
         pairing_data: &mut PairingData,
-        local_io: IoCapabilities,
     ) -> Result<(), Error> {
         let peer_features = PairingFeatures::decode(payload).map_err(|_| Error::Security(Reason::InvalidParameters))?;
         if peer_features.maximum_encryption_key_size < ENCRYPTION_KEY_SIZE_128_BITS {
@@ -302,9 +301,9 @@ impl Pairing {
             local_features.initiator_key_distribution.set_identity_key();
         }*/
 
-        pairing_data.local_features.io_capabilities = local_io;
         pairing_data.peer_features = peer_features;
         pairing_data.pairing_method = choose_pairing_method(pairing_data.peer_features, pairing_data.local_features);
+        info!("[smp] Pairing method {:?}", pairing_data.pairing_method);
 
         Ok(())
     }
@@ -606,7 +605,8 @@ mod tests {
         let event_handler = EventHandler::default();
         let pairing = Pairing::new(
             Address::random([1, 2, 3, 4, 5, 6]),
-            Address::random([7, 8, 9, 10, 11, 12])
+            Address::random([7, 8, 9, 10, 11, 12]),
+            IoCapabilities::NoInputNoOutput,
         );
         let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(1).into();
         // Central sends pairing request, expects pairing response from peripheral
@@ -616,7 +616,6 @@ mod tests {
                 &[0x03, 0, 0x08, 16, 0, 0],
                 &mut pairing_ops,
                 &mut rng,
-                &event_handler,
             )
             .unwrap();
         {
@@ -653,7 +652,6 @@ mod tests {
                 packet.payload(),
                 &mut pairing_ops,
                 &mut rng,
-                &event_handler,
             )
             .unwrap();
 
@@ -697,7 +695,6 @@ mod tests {
                 &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
                 &mut pairing_ops,
                 &mut rng,
-                &event_handler,
             )
             .unwrap();
 
@@ -722,7 +719,6 @@ mod tests {
                 ],
                 &mut pairing_ops,
                 &mut rng,
-                &event_handler,
             )
             .unwrap();
 

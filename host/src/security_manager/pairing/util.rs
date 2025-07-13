@@ -6,19 +6,14 @@ use crate::{Address, Error, LongTermKey, PacketPool};
 use crate::prelude::SecurityLevel;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum PassKeyEntryAction {
     Display,
     Input,
 }
 
-#[cfg(feature = "defmt")]
-impl defmt::Format for PassKeyEntryAction {
-    fn format(&self, fmt: defmt::Formatter) {
-        defmt::write!(fmt, "{:?}", self)
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum PairingMethod {
     JustWorks,
     NumericComparison,
@@ -35,13 +30,6 @@ impl PairingMethod {
             PairingMethod::JustWorks => SecurityLevel::Encrypted,
             _ => SecurityLevel::EncryptedAuthenticated
         }
-    }
-}
-
-#[cfg(feature = "defmt")]
-impl defmt::Format for PairingMethod {
-    fn format(&self, fmt: defmt::Formatter) {
-        defmt::write!(fmt, "{:?}", self)
     }
 }
 

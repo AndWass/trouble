@@ -1,8 +1,7 @@
 use bt_hci::param::ConnHandle;
 use rand_core::{CryptoRng, RngCore};
-use crate::{Address, Error, LongTermKey, PacketPool};
+use crate::{Address, Error, IoCapabilities, LongTermKey, PacketPool};
 use crate::connection::{ConnectionEvent, SecurityLevel};
-use crate::host::EventHandler;
 use crate::security_manager::{TxPacket};
 use crate::security_manager::types::Command;
 
@@ -31,10 +30,10 @@ impl Pairing {
     pub(crate) fn is_central(&self) -> bool {
         matches!(self, Pairing::Central(_))
     }
-    pub(crate) fn handle_l2cap_command<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(&self, command: Command, payload: &[u8], ops: &mut OPS, rng: &mut RNG, event_handler: &dyn EventHandler) -> Result<(), Error> {
+    pub(crate) fn handle_l2cap_command<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(&self, command: Command, payload: &[u8], ops: &mut OPS, rng: &mut RNG) -> Result<(), Error> {
         match self {
-            Pairing::Central(central) => central.handle_l2cap_command(command, payload, ops, rng, event_handler),
-            Pairing::Peripheral(peripheral) => peripheral.handle_l2cap_command(command, payload, ops, rng, event_handler),
+            Pairing::Central(central) => central.handle_l2cap_command(command, payload, ops, rng),
+            Pairing::Peripheral(peripheral) => peripheral.handle_l2cap_command(command, payload, ops, rng),
         }
     }
 
@@ -51,17 +50,17 @@ impl Pairing {
             Pairing::Peripheral(p) => p.security_level(),
         }
     }
-    pub(crate) fn new_central(local_address: Address, peer_address: Address) -> Pairing {
-        Pairing::Central(central::Pairing::new_idle(local_address, peer_address))
+    pub(crate) fn new_central(local_address: Address, peer_address: Address, local_io: IoCapabilities) -> Pairing {
+        Pairing::Central(central::Pairing::new_idle(local_address, peer_address, local_io))
     }
 
     pub(crate) fn initiate_central<P: PacketPool, OPS: PairingOps<P>>(local_address: Address, peer_address: Address,
-                                                                      ops: &mut OPS) -> Result<Self, Error> {
-        Ok(Pairing::Central(central::Pairing::initiate(local_address, peer_address, ops)?))
+                                                                      ops: &mut OPS, local_io: IoCapabilities) -> Result<Self, Error> {
+        Ok(Pairing::Central(central::Pairing::initiate(local_address, peer_address, ops, local_io)?))
     }
 
-    pub(crate) fn new_peripheral(local_address: Address, peer_address: Address) -> Pairing {
-        Pairing::Peripheral(peripheral::Pairing::new(local_address, peer_address))
+    pub(crate) fn new_peripheral(local_address: Address, peer_address: Address, local_io: IoCapabilities) -> Pairing {
+        Pairing::Peripheral(peripheral::Pairing::new(local_address, peer_address, local_io))
     }
 
     pub(crate) fn peer_address(&self) -> Address {
