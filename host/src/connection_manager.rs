@@ -681,10 +681,6 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                             host.async_command(LeEnableEncryption::new(handle, [0; 8], 0, ltk.to_le_bytes()))
                                 .await?;
                         }
-                        // Emit the bonded event after enabling encryption
-                        // TODO is this correct?
-                        self.post_event(index as u8, ConnectionEvent::Bonded { bond_info })
-                            .await;
                     } else {
                         warn!("[host] Enable encryption failed, no long term key")
                     }

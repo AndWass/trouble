@@ -17,7 +17,7 @@ use crate::pdu::Pdu;
 #[cfg(feature = "gatt")]
 use crate::prelude::{AttributeServer, GattConnection};
 #[cfg(feature = "security")]
-use crate::security_manager::{BondInformation, PassKey};
+use crate::security_manager::{PassKey};
 use crate::{BleHostError, Error, Identity, PacketPool, Stack};
 
 /// Security level of a connection
@@ -143,12 +143,6 @@ pub enum ConnectionEvent {
         peripheral_latency: u16,
         /// Supervision timeout.
         supervision_timeout: Duration,
-    },
-    #[cfg(feature = "security")]
-    /// Bonded event.
-    Bonded {
-        /// Bond info for this connection
-        bond_info: BondInformation,
     },
     #[cfg(feature = "security")]
     /// Request to display a pass key

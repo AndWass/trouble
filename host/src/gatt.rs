@@ -136,14 +136,6 @@ impl<'stack, 'server, P: PacketPool> GattConnection<'stack, 'server, P> {
                     supervision_timeout,
                 },
                 ConnectionEvent::PhyUpdated { tx_phy, rx_phy } => GattConnectionEvent::PhyUpdated { tx_phy, rx_phy },
-                #[cfg(feature = "security")]
-                ConnectionEvent::Bonded { bond_info } => {
-                    // Update the identity of the connection
-                    if let Err(e) = self.server.update_identity(bond_info.identity) {
-                        error!("Failed to update identity in att server: {:?}", e);
-                    }
-                    GattConnectionEvent::Bonded { bond_info }
-                },
 
                 #[cfg(feature = "security")]
                 ConnectionEvent::PassKeyDisplay(key) => {
