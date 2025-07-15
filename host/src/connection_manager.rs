@@ -690,7 +690,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
             }
             crate::security_manager::SecurityEventData::Timeout => {
                 warn!("[host] Pairing timeout");
-                self.security_manager.cancel_timeout()?;
+                self.security_manager.cancel_timeout();
             }
             crate::security_manager::SecurityEventData::TimerChange => (),
         }

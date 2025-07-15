@@ -18,7 +18,7 @@ use bt_hci::param::{ConnHandle, LeConnRole};
 pub use crypto::{IdentityResolvingKey, LongTermKey};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
-use embassy_time::{Duration, Instant, TimeoutError, WithTimeout};
+use embassy_time::{Instant, TimeoutError, WithTimeout};
 use heapless::Vec;
 use rand_chacha::ChaCha12Rng;
 use rand_core::SeedableRng;
@@ -31,7 +31,6 @@ use crate::pdu::Pdu;
 use crate::prelude::ConnectionEvent;
 use crate::security_manager::pairing::Pairing;
 use crate::security_manager::pairing::PairingOps;
-use crate::security_manager::types::{AuthReq, BondingFlag};
 use crate::types::l2cap::L2CAP_CID_LE_U_SECURITY_MANAGER;
 use crate::{Address, Error, Identity, PacketPool};
 
@@ -43,7 +42,7 @@ pub(crate) enum SecurityEventData {
     EnableEncryption(ConnHandle, BondInformation),
     /// Pairing timeout
     Timeout,
-    /// Oairing timer changed
+    /// Pairing timer changed
     TimerChange,
 }
 
@@ -169,12 +168,7 @@ pub struct SecurityManager<const BOND_COUNT: usize> {
     /// Received events
     events: Channel<NoopRawMutex, SecurityEventData, 2>,
     /// Io capabilities
-    io_capabilities: IoCapabilities
-}
-
-enum TimerCommand {
-    Stop,
-    Start,
+    io_capabilities: IoCapabilities,
 }
 
 impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
@@ -186,7 +180,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
             state: RefCell::new(SecurityManagerData::new()),
             events: Channel::new(),
             pairing_sm: RefCell::new(None),
-            io_capabilities
+            io_capabilities,
         }
     }
 
@@ -325,7 +319,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
             return Err(Error::InvalidValue);
         }
 
-        let sm = { self.pairing_sm.borrow() };
+        let sm = self.pairing_sm.borrow();
         let mut ops = PairingOpsImpl {
             security_manager: self,
             conn_handle: handle,
@@ -428,8 +422,19 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
             self.handle_central(pdu, connections, storage)
         };
 
-        if let Err(e) = self.handle_security_error(connections, storage, &result) {
-            error!("[security manager] Failed sending pairing failed message! {:?}", e);
+        if !result.is_err() {
+            match self.pairing_sm.borrow().as_ref() {
+                Some(sm) => {
+                    sm.reset_timeout();
+                    let _ = self.events.try_send(SecurityEventData::TimerChange);
+                },
+                None => {}
+            }
+        }
+        else {
+            if let Err(e) = self.handle_security_error(connections, storage, &result) {
+                error!("[security manager] Failed sending pairing failed message! {:?}", e);
+            }
         }
         result
     }
@@ -478,42 +483,53 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         if storage.security_level != SecurityLevel::NoEncryption {
             return Err(Error::Security(Reason::UnspecifiedReason));
         }
-        if storage.role.ok_or(Error::InvalidValue)? == LeConnRole::Peripheral {
+
+        let role = storage.role.ok_or(Error::InvalidValue)?;
+        let mut pairing_sm = self.pairing_sm.borrow_mut();
+        if pairing_sm.is_none() {
             let handle = storage.handle.ok_or(Error::InvalidValue)?;
-            let mut security_request = self.prepare_packet(Command::SecurityRequest, connections)?;
-            let payload = security_request.payload_mut();
-            payload[0] = AuthReq::new(BondingFlag::NoBonding).into();
-            connections.try_outbound(handle, security_request.into_pdu())?;
-            Ok(())
-        } else {
-            let mut pairing_sm = self.pairing_sm.borrow_mut();
-            if pairing_sm.is_none() {
-                let handle = storage.handle.ok_or(Error::InvalidValue)?;
-                let local_address = self.state.borrow().local_address.clone().ok_or(Error::InvalidValue)?;
-                let peer_address_kind = storage.peer_addr_kind.ok_or(Error::InvalidValue)?;
-                let peer_identity = storage.peer_identity.ok_or(Error::InvalidValue)?;
-                let peer_address = Address {
-                    kind: peer_address_kind,
-                    addr: peer_identity.bd_addr,
-                };
-                let mut ops = PairingOpsImpl {
-                    security_manager: self,
-                    conn_handle: handle,
-                    connections,
-                    storage,
-                    peer_identity,
-                };
-                *pairing_sm = Some(Pairing::initiate_central(local_address, peer_address, &mut ops, self.io_capabilities)?);
+            let local_address = self.state.borrow().local_address.clone().ok_or(Error::InvalidValue)?;
+            let peer_address_kind = storage.peer_addr_kind.ok_or(Error::InvalidValue)?;
+            let peer_identity = storage.peer_identity.ok_or(Error::InvalidValue)?;
+            let peer_address = Address {
+                kind: peer_address_kind,
+                addr: peer_identity.bd_addr,
+            };
+            let mut ops = PairingOpsImpl {
+                security_manager: self,
+                conn_handle: handle,
+                connections,
+                storage,
+                peer_identity,
+            };
+            if role == LeConnRole::Peripheral {
+                *pairing_sm = Some(Pairing::initiate_peripheral(
+                    local_address,
+                    peer_address,
+                    &mut ops,
+                    self.io_capabilities,
+                )?);
                 Ok(())
             } else {
-                Err(Error::InvalidState)
+                *pairing_sm = Some(Pairing::initiate_central(
+                    local_address,
+                    peer_address,
+                    &mut ops,
+                    self.io_capabilities,
+                )?);
+                Ok(())
             }
+        } else {
+            Err(Error::InvalidState)
         }
     }
 
     /// Cancel pairing after timeout
-    pub(crate) fn cancel_timeout(&self) -> Result<(), Error> {
-        todo!()
+    pub(crate) fn cancel_timeout(&self) {
+        match self.pairing_sm.borrow().as_ref() {
+            Some(pairing) => pairing.mark_timeout(),
+            None => {}
+        }
     }
 
     /// Channel disconnected
@@ -535,10 +551,7 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
         match event {
             Event::EncryptionChangeV1(event_data) => match event_data.status.to_result() {
                 Ok(()) => {
-                    trace!(
-                        "[smp] Encryption Changed event {}",
-                        event_data.enabled
-                    );
+                    trace!("[smp] Encryption Changed event {}", event_data.enabled);
                     connections.with_connected_handle(event_data.handle, |storage| {
                         if event_data.enabled {
                             let sm = self.pairing_sm.borrow();
@@ -597,6 +610,13 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
             };
             let mut rng = self.rng.borrow_mut();
             let res = sm.handle_event(pairing_event, &mut ops, rng.deref_mut());
+            if res.is_ok() {
+                sm.reset_timeout();
+                let _ = self.events.try_send(SecurityEventData::TimerChange);
+            }
+            else if let Err(e) = self.handle_security_error(connections, storage, &res) {
+                error!("[security manager] Failed sending pairing failed message! {:?}", e);
+            }
             res?;
         }
         Ok(())
@@ -655,18 +675,15 @@ impl<const BOND_COUNT: usize> SecurityManager<BOND_COUNT> {
     pub(crate) fn poll_events(
         &self,
     ) -> impl Future<Output = Result<SecurityEventData, TimeoutError>> + use<'_, BOND_COUNT> {
+        let deadline = self
+            .pairing_sm
+            .borrow()
+            .as_ref()
+            .map(|x| x.timeout_at())
+            .unwrap_or(Instant::now() + constants::TIMEOUT_DISABLE);
         // try to pop an event from the channel
-        poll_fn(|cx| self.events.poll_receive(cx)).with_deadline(Instant::now() + Self::TIMEOUT_DISABLE)
+        poll_fn(|cx| self.events.poll_receive(cx)).with_deadline(deadline)
     }
-
-    /// Long duration, to disable the timer
-    const TIMEOUT_DISABLE: Duration = Duration::from_secs(31556926); // ~1 year
-                                                                     // Workaround for Duration multiplication not being const
-    const TIMEOUT_SECS: u64 = 30;
-    /// Pairing time-out
-    const TIMEOUT: Duration = Duration::from_secs(Self::TIMEOUT_SECS);
-    /// Pairing time-out treshold, used to register wakeup
-    const TIMER_WAKE_THRESHOLD: Duration = Duration::from_secs(Self::TIMEOUT_SECS * 2);
 }
 
 struct PairingOpsImpl<'sm, 'cm, 'cm2, 'cs, const B: usize, P: PacketPool> {
@@ -680,7 +697,9 @@ struct PairingOpsImpl<'sm, 'cm, 'cm2, 'cs, const B: usize, P: PacketPool> {
 impl<'sm, 'cm, 'cm2, 'cs, const B: usize, P: PacketPool> PairingOps<P> for PairingOpsImpl<'sm, 'cm, 'cm2, 'cs, B, P> {
     fn try_send_packet(&mut self, packet: TxPacket<P>) -> Result<(), Error> {
         self.security_manager
-            .try_send_packet(packet, self.connections, self.connection_handle())
+            .try_send_packet(packet, self.connections, self.connection_handle())?;
+        let _ = self.security_manager.events.try_send(SecurityEventData::TimerChange);
+        Ok(())
     }
 
     fn try_enable_encryption(&mut self, ltk: &LongTermKey) -> Result<(), Error> {
@@ -700,6 +719,11 @@ impl<'sm, 'cm, 'cm2, 'cs, const B: usize, P: PacketPool> PairingOps<P> for Pairi
     }
 
     fn try_send_connection_event(&mut self, event: ConnectionEvent) -> Result<(), Error> {
-        self.storage.events.try_send(event).map_err(|_| Error::OutOfMemory)
+        let timer_changed = matches!(event, ConnectionEvent::PairingComplete(_) | ConnectionEvent::PairingFailed(_));
+        self.storage.events.try_send(event).map_err(|_| Error::OutOfMemory)?;
+        if timer_changed {
+            let _ = self.security_manager.events.try_send(SecurityEventData::TimerChange);
+        }
+        Ok(())
     }
 }

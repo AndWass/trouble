@@ -4,11 +4,12 @@ use crate::security_manager::constants::ENCRYPTION_KEY_SIZE_128_BITS;
 use crate::security_manager::crypto::{Confirm, DHKey, MacKey, Nonce, PublicKey, SecretKey};
 use crate::security_manager::pairing::util::{choose_pairing_method, make_confirm_packet, make_dhkey_check_packet, make_pairing_random, make_public_key_packet, prepare_packet, CommandAndPayload, PairingMethod, PassKeyEntryAction};
 use crate::security_manager::pairing::{Event, PairingOps};
-use crate::security_manager::types::{Command, PassKey, IoCapabilities, PairingFeatures};
+use crate::security_manager::types::{Command, PassKey, IoCapabilities, PairingFeatures, AuthReq, BondingFlag};
 use crate::security_manager::Reason;
 use crate::{Address, Error, LongTermKey, PacketPool};
 use core::cell::RefCell;
 use core::ops::{Deref, DerefMut};
+use embassy_time::Instant;
 use rand::Rng;
 use rand_core::{CryptoRng, RngCore};
 use crate::prelude::ConnectionEvent;
@@ -88,9 +89,31 @@ struct PairingData {
     peer_nonce: Nonce,
     mac_key: Option<MacKey>,
     long_term_key: LongTermKey,
+    timeout_at: Instant,
 }
 
 impl Pairing {
+    pub fn timeout_at(&self) -> Instant {
+        let step = self.current_step.borrow();
+        if matches!(step.deref(), Step::Success | Step::Error(_)) {
+            Instant::now() + crate::security_manager::constants::TIMEOUT_DISABLE
+        } else {
+            self.pairing_data.borrow().timeout_at
+        }
+    }
+
+    pub fn reset_timeout(&self) {
+        let mut pairing_data = self.pairing_data.borrow_mut();
+        pairing_data.timeout_at = Instant::now() + crate::security_manager::constants::TIMEOUT;
+    }
+
+    pub(crate) fn mark_timeout(&self) {
+        let mut current_step = self.current_step.borrow_mut();
+        if matches!(current_step.deref(), Step::Success | Step::Error(_)) {
+            return;
+        }
+        *current_step = Step::Error(Error::Timeout);
+    }
     pub fn peer_address(&self) -> Address {
         self.pairing_data.borrow().peer_address
     }
@@ -116,8 +139,25 @@ impl Pairing {
                 peer_nonce: Nonce(0),
                 mac_key: None,
                 long_term_key: LongTermKey(0),
+                timeout_at: Instant::now() + crate::security_manager::constants::TIMEOUT,
             }),
         }
+    }
+
+    pub(crate) fn initiate<P: PacketPool, OPS: PairingOps<P>>(
+        local_address: Address,
+        peer_address: Address,
+        ops: &mut OPS,
+        local_io: IoCapabilities
+    ) -> Result<Self, Error> {
+        let ret = Self::new(local_address, peer_address, local_io);
+        {
+            let mut security_request = prepare_packet(Command::SecurityRequest)?;
+            let payload = security_request.payload_mut();
+            payload[0] = AuthReq::new(BondingFlag::NoBonding).into();
+            ops.try_send_packet(security_request)?;
+        }
+        Ok(ret)
     }
 
     pub fn handle_l2cap_command<P: PacketPool, OPS: PairingOps<P>, RNG: CryptoRng + RngCore>(
@@ -294,7 +334,6 @@ impl Pairing {
         pairing_data.peer_features = peer_features;
         pairing_data.pairing_method = choose_pairing_method(pairing_data.peer_features, pairing_data.local_features);
         info!("[smp] Pairing method {:?}", pairing_data.pairing_method);
-
         Ok(())
     }
 
@@ -311,7 +350,7 @@ impl Pairing {
             .map_err(|_| Error::InvalidValue)?;
 
         match ops.try_send_packet(packet) {
-            Ok(_) => {}
+            Ok(_) => (),
             Err(error) => {
                 error!("[smp] Failed to respond to request {:?}", error);
                 return Err(error);
@@ -438,7 +477,8 @@ impl Pairing {
         );
 
         let check = make_dhkey_check_packet(&check)?;
-        ops.try_send_packet(check)
+        ops.try_send_packet(check)?;
+        Ok(())
     }
 
     fn numeric_compare_confirm<P: PacketPool, OPS: PairingOps<P>>(ops: &mut OPS, pairing_data: &PairingData) -> Result<Step, Error> {

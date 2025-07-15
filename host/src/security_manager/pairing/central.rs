@@ -12,6 +12,7 @@ use crate::security_manager::{PassKey, Reason};
 use crate::{Address, Error, IoCapabilities, LongTermKey, PacketPool};
 use core::cell::RefCell;
 use core::ops::{Deref, DerefMut};
+use embassy_time::Instant;
 use rand::Rng;
 use rand_core::{CryptoRng, RngCore};
 
@@ -141,6 +142,7 @@ struct PairingData {
     peer_nonce: Nonce,
     mac_key: Option<MacKey>,
     ltk: Option<LongTermKey>,
+    timeout_at: Instant,
 }
 
 pub struct Pairing {
@@ -149,6 +151,28 @@ pub struct Pairing {
 }
 
 impl Pairing {
+    pub fn timeout_at(&self) -> Instant {
+        let step = self.current_step.borrow();
+        if matches!(step.deref(), Step::Success | Step::Error(_)) {
+            Instant::now() + crate::security_manager::constants::TIMEOUT_DISABLE
+        } else {
+            self.pairing_data.borrow().timeout_at
+        }
+    }
+
+    pub fn reset_timeout(&self) {
+        let mut pairing_data = self.pairing_data.borrow_mut();
+        pairing_data.timeout_at = Instant::now() + crate::security_manager::constants::TIMEOUT;
+    }
+
+    pub(crate) fn mark_timeout(&self) {
+        let mut current_step = self.current_step.borrow_mut();
+        if matches!(current_step.deref(), Step::Idle | Step::Success | Step::Error(_)) {
+            return;
+        }
+        *current_step = Step::Error(Error::Timeout);
+    }
+
     pub(crate) fn new_idle(local_address: Address, peer_address: Address, local_io: IoCapabilities) -> Pairing {
         let mut local_features = PairingFeatures::default();
         local_features.io_capabilities = local_io;
@@ -169,6 +193,7 @@ impl Pairing {
             confirm: Confirm(0),
             ltk: None,
             private_key: None,
+            timeout_at: Instant::now() + crate::security_manager::constants::TIMEOUT_DISABLE,
         };
         Self {
             pairing_data: RefCell::new(pairing_data),
@@ -188,6 +213,7 @@ impl Pairing {
             let next_step = Step::WaitingPairingResponse(PairingRequestSentTag::new(pairing_data.deref_mut(), ops)?);
             ret.current_step.replace(next_step);
         }
+        ret.reset_timeout();
         Ok(ret)
     }
 

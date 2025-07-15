@@ -1,4 +1,5 @@
 use bt_hci::param::ConnHandle;
+use embassy_time::Instant;
 use rand_core::{CryptoRng, RngCore};
 use crate::{Address, Error, IoCapabilities, LongTermKey, PacketPool};
 use crate::connection::{ConnectionEvent, SecurityLevel};
@@ -63,10 +64,36 @@ impl Pairing {
         Pairing::Peripheral(peripheral::Pairing::new(local_address, peer_address, local_io))
     }
 
+    pub(crate) fn initiate_peripheral<P: PacketPool, OPS: PairingOps<P>>(local_address: Address, peer_address: Address,
+                                                                      ops: &mut OPS, local_io: IoCapabilities) -> Result<Self, Error> {
+        Ok(Pairing::Peripheral(peripheral::Pairing::initiate(local_address, peer_address, ops, local_io)?))
+    }
+
     pub(crate) fn peer_address(&self) -> Address {
         match self {
             Pairing::Central(central) => central.peer_address(),
             Pairing::Peripheral(per) => per.peer_address(),
+        }
+    }
+
+    pub(crate) fn timeout_at(&self) -> Instant {
+        match self {
+            Pairing::Central(c) => c.timeout_at(),
+            Pairing::Peripheral(p) => p.timeout_at(),
+        }
+    }
+
+    pub(crate) fn reset_timeout(&self) {
+        match self {
+            Pairing::Central(c) => c.reset_timeout(),
+            Pairing::Peripheral(p) => p.reset_timeout(),
+        }
+    }
+
+    pub(crate) fn mark_timeout(&self) {
+        match self {
+            Pairing::Central(c) => c.mark_timeout(),
+            Pairing::Peripheral(p) => p.mark_timeout(),
         }
     }
 }
