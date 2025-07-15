@@ -489,8 +489,8 @@ impl Pairing {
         }
         pairing_data.peer_nonce = peer_nonce;
         let va = pairing_data.local_nonce.g2(
-            pairing_data.peer_public_key.ok_or(Error::InvalidValue)?.x(),
             pairing_data.local_public_key.ok_or(Error::InvalidValue)?.x(),
+            pairing_data.peer_public_key.ok_or(Error::InvalidValue)?.x(),
             &pairing_data.peer_nonce,
         );
 
