@@ -27,7 +27,7 @@ use crate::security_manager::{PassKey};
 use crate::connection::SecurityLevel;
 use crate::types::gatt_traits::{AsGatt, FromGatt, FromGattError};
 use crate::types::l2cap::L2capHeader;
-use crate::{config, BleHostError, Error, PacketPool, Stack};
+use crate::{config, BleHostError, BondInformation, Error, PacketPool, Stack};
 
 /// A GATT connection event.
 pub enum GattConnectionEvent<'stack, 'server, P: PacketPool> {
@@ -56,6 +56,13 @@ pub enum GattConnectionEvent<'stack, 'server, P: PacketPool> {
     Gatt {
         /// The event that was returned
         event: GattEvent<'stack, 'server, P>,
+    },
+
+    #[cfg(feature = "security")]
+    /// A bonded pairing has been established
+    Bonded {
+        /// Bond information. This should be stored by the device for future bonding.
+        bond_info: BondInformation
     },
 
     #[cfg(feature = "security")]
@@ -132,6 +139,11 @@ impl<'stack, 'server, P: PacketPool> GattConnection<'stack, 'server, P> {
                     supervision_timeout,
                 },
                 ConnectionEvent::PhyUpdated { tx_phy, rx_phy } => GattConnectionEvent::PhyUpdated { tx_phy, rx_phy },
+
+                #[cfg(feature = "security")]
+                ConnectionEvent::Bonded { bond_info} => {
+                    GattConnectionEvent::Bonded { bond_info }
+                }
 
                 #[cfg(feature = "security")]
                 ConnectionEvent::PassKeyDisplay(key) => {
